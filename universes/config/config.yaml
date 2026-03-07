@@ -1,0 +1,44 @@
+app:
+  name: loreforge
+  env: dev
+
+universe:
+  path: ./universes/example-universe
+
+scheduler:
+  enabled: true
+  mode: random_window
+  min_interval: 3h
+  max_interval: 6h
+  seed: 42
+  timezone: America/Chicago
+
+generation:
+  enabled_agents: [text, video]
+  weights:
+    text: 70
+    video: 30
+  max_retries: 2
+  recency_window: 20
+
+providers:
+  text:
+    driver: openai
+    model: gpt-5-mini
+    api_key_env: OPENAI_API_KEY
+  video:
+    driver: some-video-api
+    model: video-v1
+    api_key_env: VIDEO_API_KEY
+
+channels:
+  filesystem:
+    enabled: true
+    output_dir: ./out
+
+memory:
+  driver: sqlite
+  dsn: ./data/universe.db
+
+logging:
+  level: info
