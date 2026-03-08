@@ -36,6 +36,9 @@ func (h Handler) Handle(ctx context.Context) (Result, error) {
 			result.Preserved = append(result.Preserved, item.Config.ID)
 			continue
 		}
+		if !item.Config.SchedulerEnabled {
+			continue
+		}
 		scheduler, err := scheduling.NewScheduler(item.Config.Scheduler)
 		if err != nil {
 			return Result{}, err

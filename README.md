@@ -73,10 +73,10 @@ go run ./cmd/loreforge run --config ./universes/config.yaml
 | --- | --- |
 | `loreforge validate --config ...` | Validates config, universe loading, and runtime wiring. |
 | `loreforge universe lint <path>` | Validates only the universe folder structure and schema. |
-| `loreforge artists list --config ...` | Lists active runtime artists, linked profiles, providers, and next scheduled run. |
+| `loreforge artists list --config ...` | Lists active runtime artists, linked profiles, providers, and next scheduled run. Artists with `scheduler.enabled: false` show `next_run=disabled`. |
 | `loreforge generate once --artist <id> --config ...` | Generates one episode for a specific artist. |
-| `loreforge run --config ...` | Generates one episode for the next due artist. |
-| `loreforge scheduler next-run --artist <id> --config ...` | Shows the next scheduled run for one artist or the nearest overall. |
+| `loreforge run --config ...` | Generates one episode for the next due artist. Disabled schedulers are ignored, and future artists are not executed early. |
+| `loreforge scheduler next-run --artist <id> --config ...` | Shows the next scheduled run for one artist or the nearest overall. Disabled schedulers are excluded from the overall result. |
 | `loreforge episode show <episode-id> --config ...` | Shows the stored manifest for one episode. |
 | `loreforge config refresh --config ...` | Reconciles config with persisted scheduler state without resetting existing schedules or memory. |
 
@@ -88,7 +88,7 @@ It does this:
 
 - reloads the current config and universe
 - preserves scheduler state for existing artists
-- creates scheduler state for newly added artists
+- creates scheduler state for newly added artists with scheduling enabled
 - keeps orphaned scheduler state files untouched instead of deleting them
 
 It does not:
@@ -156,6 +156,11 @@ An artist profile defines:
 
 Runtime config binds a generator job to that profile through `profile_id`.
 
+Runtime ids are intentionally strict:
+
+- `id` and `profile_id` must use only letters, numbers, `_`, or `-`
+- path separators and `..` are rejected
+
 Example:
 
 ```yaml
@@ -207,6 +212,12 @@ artists:
 
 The full working example lives at `universes/config.yaml`.
 
+Path handling is relative to the config file location, not the current shell directory. That applies to:
+
+- `universe.path`
+- `memory.dsn`
+- `channels.filesystem.output_dir`
+
 ## Provider Drivers
 
 | Capability | Drivers |
@@ -236,6 +247,12 @@ Each episode stores a full trace under `data/episodes/...`, including:
 - `publish.json`
 - `presentation.json`
 - `artist_snapshot.json`
+
+Manifest state now distinguishes:
+
+- `generated`: content was generated and no publish target ran
+- `published`: at least one publish target succeeded
+- `publish_failed`: publish targets existed but none succeeded
 
 This makes LoreForge useful not only as a generator, but also as an auditable narrative pipeline.
 

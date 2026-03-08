@@ -70,6 +70,15 @@ Supported `model_roles` keys:
 
 `video_prompt_image` is only valid for `media_type: image`.
 
+`file` is intentionally restricted:
+
+- it must be a basename of a file that lives beside the entity markdown
+- absolute paths are rejected
+- subdirectories are rejected
+- `..` is rejected
+
+This keeps asset declarations contained to the entity directory and prevents path traversal through config content.
+
 ## Autodiscovery
 
 If an entity directory contains images or videos and no `assets.yaml`, LoreForge creates default asset records:

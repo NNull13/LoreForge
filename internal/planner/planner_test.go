@@ -74,3 +74,26 @@ func TestNew_DeterministicWhenSeededAndNotProduction(t *testing.T) {
 		t.Fatalf("expected deterministic output for same seed")
 	}
 }
+
+func TestBuildBriefForTypeUsesRequestedOutputType(t *testing.T) {
+	u := universe.Universe{
+		Universe:   universe.Entity{ID: "u1", Type: "universe", Data: map[string]any{"creator_presence": "steady"}},
+		Worlds:     map[string]universe.Entity{"w1": {ID: "w1", Type: "world"}},
+		Characters: map[string]universe.Entity{"c1": {ID: "c1", Type: "character"}},
+		Events:     map[string]universe.Entity{"e1": {ID: "e1", Type: "event"}},
+		Templates: map[string]universe.Entity{
+			"t1": {ID: "t1", Type: "template", Data: map[string]any{"output_type": "short_story"}},
+			"t2": {ID: "t2", Type: "template", Data: map[string]any{"output_type": "poem"}},
+		},
+		Rules: map[string]universe.Entity{},
+	}
+	p := New(Config{Weights: map[string]int{"poem": 100}, RecencyWindow: 5, Seed: 1234})
+
+	brief, err := p.BuildBriefForType(u, "short_story", nil)
+	if err != nil {
+		t.Fatalf("BuildBriefForType failed: %v", err)
+	}
+	if brief.TemplateID != "t1" || string(brief.EpisodeType) != "short_story" {
+		t.Fatalf("unexpected brief: %#v", brief)
+	}
+}

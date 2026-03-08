@@ -2,8 +2,9 @@ package vertexveo
 
 import (
 	"context"
+	"io"
 	"net/http"
-	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"loreforge/internal/adapters/providers/contracts"
@@ -36,21 +37,34 @@ func TestGenerateVideoRejectsStyleReferenceForVeo31(t *testing.T) {
 }
 
 func TestGenerateVideoPollsOperationAndDownloadsFromGCSAPI(t *testing.T) {
-	var server *httptest.Server
-	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		switch {
 		case r.Method == http.MethodPost:
-			_, _ = w.Write([]byte(`{"name":"operations/test-op"}`))
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(`{"name":"operations/test-op"}`)),
+			}, nil
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/operations/test-op":
-			_, _ = w.Write([]byte(`{"done":true,"response":{"videos":[{"gcsUri":"gs://bucket/video.mp4"}]}}`))
-		case r.Method == http.MethodGet && r.URL.Path == "/storage/v1/b/bucket/o/video.mp4":
-			w.Header().Set("Content-Type", "video/mp4")
-			_, _ = w.Write([]byte("video-data"))
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(`{"done":true,"response":{"videos":[{"gcsUri":"gs://bucket/video.mp4"}]}}`)),
+			}, nil
+		case r.Method == http.MethodGet && r.URL.Host == "storage.test" && r.URL.Path == "/storage/v1/b/bucket/o/video.mp4":
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"video/mp4"}},
+				Body:       io.NopCloser(strings.NewReader("video-data")),
+			}, nil
 		default:
-			http.NotFound(w, r)
+			return &http.Response{
+				StatusCode: http.StatusNotFound,
+				Header:     http.Header{"Content-Type": []string{"text/plain"}},
+				Body:       io.NopCloser(strings.NewReader("not found")),
+			}, nil
 		}
-	}))
-	defer server.Close()
+	})}
 
 	t.Setenv("GOOGLE_CLOUD_PROJECT", "project-1")
 	t.Setenv("GOOGLE_CLOUD_ACCESS_TOKEN", "token-1")
@@ -61,12 +75,12 @@ func TestGenerateVideoPollsOperationAndDownloadsFromGCSAPI(t *testing.T) {
 			ProjectIDEnv: "GOOGLE_CLOUD_PROJECT",
 			Location:     "us-central1",
 			BucketURI:    "gs://bucket/out",
-			BaseURL:      server.URL + "/v1",
+			BaseURL:      "https://vertex.test/v1",
 			PollInterval: "1ms",
 			Timeout:      "2s",
-			Options:      map[string]any{"gcs_base_url": server.URL},
+			Options:      map[string]any{"gcs_base_url": "https://storage.test"},
 		},
-		HTTP: server.Client(),
+		HTTP: client,
 	}
 
 	resp, err := provider.GenerateVideo(context.Background(), contracts.VideoRequest{Prompt: "storm"})
@@ -79,4 +93,10 @@ func TestGenerateVideoPollsOperationAndDownloadsFromGCSAPI(t *testing.T) {
 	if resp.JobID != "operations/test-op" {
 		t.Fatalf("unexpected job id: %s", resp.JobID)
 	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
 }

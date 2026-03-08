@@ -27,6 +27,9 @@ func (h Handler) Handle(ctx context.Context, req Request) (time.Time, error) {
 		if !ok {
 			return time.Time{}, fmt.Errorf("%w: %s", episode.ErrGeneratorUnavailable, req.GeneratorID)
 		}
+		if !def.Config.SchedulerEnabled {
+			return time.Time{}, fmt.Errorf("%w: %s", episode.ErrSchedulerDisabled, req.GeneratorID)
+		}
 		return h.nextRunForGenerator(ctx, def, now)
 	}
 	items := h.Registry.List()
@@ -34,7 +37,12 @@ func (h Handler) Handle(ctx context.Context, req Request) (time.Time, error) {
 		return time.Time{}, episode.ErrNoGeneratorsAvailable
 	}
 	var best time.Time
+	enabled := 0
 	for _, item := range items {
+		if !item.Config.SchedulerEnabled {
+			continue
+		}
+		enabled++
 		next, err := h.nextRunForGenerator(ctx, item, now)
 		if err != nil {
 			return time.Time{}, err
@@ -42,6 +50,9 @@ func (h Handler) Handle(ctx context.Context, req Request) (time.Time, error) {
 		if best.IsZero() || next.Before(best) {
 			best = next
 		}
+	}
+	if enabled == 0 {
+		return time.Time{}, episode.ErrSchedulerDisabled
 	}
 	return best, nil
 }

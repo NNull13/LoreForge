@@ -217,6 +217,10 @@ func artistsCmd(args []string) {
 	items, err := app.artists.Handle(context.Background())
 	must(err)
 	for _, item := range items {
+		nextRun := "disabled"
+		if item.NextRun != nil {
+			nextRun = item.NextRun.Format(time.RFC3339)
+		}
 		fmt.Printf("%s | profile=%s | name=%s | type=%s | provider=%s/%s | next_run=%s | targets=%s\n",
 			item.GeneratorID,
 			item.ProfileID,
@@ -224,7 +228,7 @@ func artistsCmd(args []string) {
 			item.Type,
 			item.ProviderDriver,
 			item.ProviderModel,
-			item.NextRun.Format(time.RFC3339),
+			nextRun,
 			strings.Join(item.PublishTargets, ","),
 		)
 	}
@@ -328,6 +332,7 @@ func buildGeneratorRegistry(cfg config.Config, u universe.Universe) (ports.Gener
 				ProfileID:             ac.ProfileID,
 				Type:                  episode.OutputType(ac.Type),
 				Style:                 ac.Style,
+				SchedulerEnabled:      isSchedulerEnabled(ac.Scheduler),
 				PublishTargets:        toPublishTargets(ac.PublishTargets),
 				Scheduler:             schedulerCfg,
 				Seed:                  ac.Scheduler.Seed,
@@ -416,6 +421,10 @@ func toSchedulingConfig(cfg config.SchedulerConfig) (scheduling.Config, error) {
 		Seed:          cfg.Seed,
 		Timezone:      cfg.Timezone,
 	}, nil
+}
+
+func isSchedulerEnabled(cfg config.SchedulerConfig) bool {
+	return cfg.Enabled == nil || *cfg.Enabled
 }
 
 func toPublishTargets(values []string) []publication.ChannelName {

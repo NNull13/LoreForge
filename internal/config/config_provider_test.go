@@ -17,7 +17,7 @@ func TestValidateRejectsMissingProviderFields(t *testing.T) {
 					Model:  "gpt-image-1.5",
 				},
 				Scheduler: SchedulerConfig{
-					Enabled:       true,
+					Enabled:       boolPtr(true),
 					Mode:          "fixed_interval",
 					FixedInterval: "1h",
 					Timezone:      "UTC",

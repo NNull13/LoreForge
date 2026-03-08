@@ -12,6 +12,9 @@ var (
 	ErrEpisodeNotFound       = errors.New("episode not found")
 	ErrUniverseInvalid       = errors.New("universe invalid")
 	ErrNoGeneratorsAvailable = errors.New("no generators available")
+	ErrNoGeneratorsDue       = errors.New("no generators due")
+	ErrSchedulerDisabled     = errors.New("scheduler disabled")
+	ErrPublishFailed         = errors.New("episode publish failed")
 )
 
 func ValidateOutput(out Output, brief Brief) error {

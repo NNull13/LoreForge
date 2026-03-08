@@ -11,14 +11,15 @@ import (
 )
 
 type Item struct {
-	GeneratorID    string
-	ProfileID      string
-	ArtistName     string
-	Type           string
-	ProviderDriver string
-	ProviderModel  string
-	NextRun        time.Time
-	PublishTargets []string
+	GeneratorID      string
+	ProfileID        string
+	ArtistName       string
+	Type             string
+	ProviderDriver   string
+	ProviderModel    string
+	SchedulerEnabled bool
+	NextRun          *time.Time
+	PublishTargets   []string
 }
 
 type Handler struct {
@@ -33,9 +34,13 @@ func (h Handler) Handle(ctx context.Context) ([]Item, error) {
 	items := h.Registry.List()
 	out := make([]Item, 0, len(items))
 	for _, item := range items {
-		next, err := h.nextRunForGenerator(ctx, item, now)
-		if err != nil {
-			return nil, err
+		var next *time.Time
+		if item.Config.SchedulerEnabled {
+			scheduled, err := h.nextRunForGenerator(ctx, item, now)
+			if err != nil {
+				return nil, err
+			}
+			next = &scheduled
 		}
 		name := item.Config.ProfileID
 		if artist, ok := h.Universe.Artists[item.Config.ProfileID]; ok && artist.Name != "" {
@@ -46,14 +51,15 @@ func (h Handler) Handle(ctx context.Context) ([]Item, error) {
 			targets = append(targets, string(target))
 		}
 		out = append(out, Item{
-			GeneratorID:    item.Config.ID,
-			ProfileID:      item.Config.ProfileID,
-			ArtistName:     name,
-			Type:           string(item.Config.Type),
-			ProviderDriver: item.Config.ProviderDriver,
-			ProviderModel:  item.Config.ProviderModel,
-			NextRun:        next,
-			PublishTargets: targets,
+			GeneratorID:      item.Config.ID,
+			ProfileID:        item.Config.ProfileID,
+			ArtistName:       name,
+			Type:             string(item.Config.Type),
+			ProviderDriver:   item.Config.ProviderDriver,
+			ProviderModel:    item.Config.ProviderModel,
+			SchedulerEnabled: item.Config.SchedulerEnabled,
+			NextRun:          next,
+			PublishTargets:   targets,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].GeneratorID < out[j].GeneratorID })

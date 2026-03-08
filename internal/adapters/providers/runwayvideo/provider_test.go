@@ -2,8 +2,9 @@ package runwayvideo
 
 import (
 	"context"
+	"io"
 	"net/http"
-	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -22,26 +23,41 @@ func TestGenerateVideoRequiresPromptImage(t *testing.T) {
 
 func TestGenerateVideoPollsTaskAndDownloadsOutput(t *testing.T) {
 	var polls int32
-	var baseURL string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/image_to_video":
-			_, _ = w.Write([]byte(`{"id":"task-1"}`))
-		case r.Method == http.MethodGet && r.URL.Path == "/tasks/task-1":
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/image_to_video":
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(`{"id":"task-1"}`)),
+			}, nil
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tasks/task-1":
 			if atomic.AddInt32(&polls, 1) == 1 {
-				_, _ = w.Write([]byte(`{"status":"PENDING"}`))
-				return
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body:       io.NopCloser(strings.NewReader(`{"status":"PENDING"}`)),
+				}, nil
 			}
-			_, _ = w.Write([]byte(`{"status":"SUCCEEDED","output":["` + baseURL + `/download/video.mp4"]}`))
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(`{"status":"SUCCEEDED","output":["https://runway.test/download/video.mp4"]}`)),
+			}, nil
 		case r.Method == http.MethodGet && r.URL.Path == "/download/video.mp4":
-			w.Header().Set("Content-Type", "video/mp4")
-			_, _ = w.Write([]byte("video"))
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"video/mp4"}},
+				Body:       io.NopCloser(strings.NewReader("video")),
+			}, nil
 		default:
-			http.NotFound(w, r)
+			return &http.Response{
+				StatusCode: http.StatusNotFound,
+				Header:     http.Header{"Content-Type": []string{"text/plain"}},
+				Body:       io.NopCloser(strings.NewReader("not found")),
+			}, nil
 		}
-	}))
-	defer server.Close()
-	baseURL = server.URL
+	})}
 
 	t.Setenv("RUNWAY_API_KEY", "runway-token")
 	provider := Provider{
@@ -49,12 +65,12 @@ func TestGenerateVideoPollsTaskAndDownloadsOutput(t *testing.T) {
 			Driver:       "runway_gen4",
 			Model:        "gen4_turbo",
 			APIKeyEnv:    "RUNWAY_API_KEY",
-			BaseURL:      server.URL,
+			BaseURL:      "https://runway.test/v1",
 			Version:      "2024-11-06",
 			PollInterval: "1ms",
 			Timeout:      "7s",
 		},
-		HTTP: server.Client(),
+		HTTP: client,
 	}
 
 	resp, err := provider.GenerateVideo(context.Background(), contracts.VideoRequest{
@@ -70,4 +86,10 @@ func TestGenerateVideoPollsTaskAndDownloadsOutput(t *testing.T) {
 	if resp.JobID != "task-1" {
 		t.Fatalf("unexpected job id: %s", resp.JobID)
 	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
 }

@@ -19,8 +19,9 @@ const (
 type Status string
 
 const (
-	StatusGenerated Status = "generated"
-	StatusPublished Status = "published"
+	StatusGenerated     Status = "generated"
+	StatusPublished     Status = "published"
+	StatusPublishFailed Status = "publish_failed"
 )
 
 type Brief struct {

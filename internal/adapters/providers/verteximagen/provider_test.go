@@ -3,8 +3,9 @@ package verteximagen
 import (
 	"context"
 	"encoding/base64"
+	"io"
 	"net/http"
-	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"loreforge/internal/adapters/providers/contracts"
@@ -13,11 +14,16 @@ import (
 
 func TestGenerateImageDecodesPrediction(t *testing.T) {
 	raw := base64.StdEncoding.EncodeToString([]byte("imgdata"))
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"predictions":[{"bytesBase64Encoded":"` + raw + `","mimeType":"image/png","prompt":"enhanced"}]}`))
-	}))
-	defer server.Close()
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if !strings.Contains(r.URL.Path, ":predict") {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"predictions":[{"bytesBase64Encoded":"` + raw + `","mimeType":"image/png","prompt":"enhanced"}]}`)),
+		}, nil
+	})}
 
 	t.Setenv("GOOGLE_CLOUD_PROJECT", "project-1")
 	t.Setenv("GOOGLE_CLOUD_ACCESS_TOKEN", "token-1")
@@ -27,9 +33,9 @@ func TestGenerateImageDecodesPrediction(t *testing.T) {
 			Model:        "imagen-4.0-fast-generate-001",
 			ProjectIDEnv: "GOOGLE_CLOUD_PROJECT",
 			Location:     "us-central1",
-			BaseURL:      server.URL,
+			BaseURL:      "https://vertex.test/v1",
 		},
-		HTTP: server.Client(),
+		HTTP: client,
 	}
 
 	resp, err := provider.GenerateImage(context.Background(), contracts.ImageRequest{Prompt: "forest"})
@@ -42,4 +48,10 @@ func TestGenerateImageDecodesPrediction(t *testing.T) {
 	if resp.RevisedPrompt != "enhanced" {
 		t.Fatalf("unexpected prompt: %s", resp.RevisedPrompt)
 	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
 }

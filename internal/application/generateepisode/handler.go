@@ -57,12 +57,11 @@ func (h Handler) Handle(ctx context.Context, req Request) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	brief, err := h.Planner.BuildBrief(u, toPlannerHistory(recent))
+	brief, err := h.Planner.BuildBriefForType(u, string(def.Config.Type), toPlannerHistory(recent))
 	if err != nil {
 		return Result{}, err
 	}
-	brief.EpisodeType = def.Config.Type
-	brief.TemplateID = pickTemplateForType(u, string(def.Config.Type), brief.TemplateID)
+	brief.TemplateID = resolveTemplateForType(u, string(def.Config.Type), brief.TemplateID)
 	if strings.TrimSpace(brief.TemplateID) == "" {
 		return Result{}, fmt.Errorf("%w: no template for output type %s", episode.ErrUniverseInvalid, def.Config.Type)
 	}
@@ -186,25 +185,35 @@ func (h Handler) Handle(ctx context.Context, req Request) (Result, error) {
 		}
 	}
 	record.Manifest.Channels = publishedChannels(record.Publish)
-	record.Manifest.Published = len(record.Manifest.Channels) > 0
-	if record.Manifest.Published {
+	publishErr := publishFailureError(record.Publish, def.Config.PublishTargets)
+	switch {
+	case len(record.Manifest.Channels) > 0:
+		record.Manifest.Published = true
 		record.Manifest.State = string(episode.StatusPublished)
+	case len(def.Config.PublishTargets) > 0:
+		record.Manifest.State = string(episode.StatusPublishFailed)
 	}
 	stored, err := h.EpisodeRepo.Save(ctx, record)
 	if err != nil {
 		return Result{}, err
 	}
-	scheduler, err := scheduling.NewScheduler(def.Config.Scheduler)
-	if err == nil {
-		nextRun, nextErr := scheduler.NextRun(now)
-		if nextErr == nil {
-			_ = h.SchedulerStateRepo.Save(ctx, def.Config.ID, scheduling.State{
-				LastRunAt: &now,
-				NextRunAt: nextRun,
-			})
+	if def.Config.SchedulerEnabled {
+		scheduler, err := scheduling.NewScheduler(def.Config.Scheduler)
+		if err == nil {
+			nextRun, nextErr := scheduler.NextRun(now)
+			if nextErr == nil {
+				_ = h.SchedulerStateRepo.Save(ctx, def.Config.ID, scheduling.State{
+					LastRunAt: &now,
+					NextRunAt: nextRun,
+				})
+			}
 		}
 	}
-	return Result{Record: record, Stored: stored}, nil
+	result := Result{Record: record, Stored: stored}
+	if publishErr != nil {
+		return result, publishErr
+	}
+	return result, nil
 }
 
 func (h Handler) bootstrapRunwayImage(ctx context.Context, req Request, brief episode.Brief, state episode.State, def ports.RegisteredGenerator) (episode.Output, error) {
@@ -263,17 +272,40 @@ func (h Handler) nextDueGenerator(ctx context.Context) (ports.RegisteredGenerato
 		return ports.RegisteredGenerator{}, episode.ErrNoGeneratorsAvailable
 	}
 	now := h.Clock.Now()
-	best := items[0]
+	var best ports.RegisteredGenerator
 	var bestTime time.Time
+	enabled := 0
+	foundDue := false
 	for _, item := range items {
+		if !item.Config.SchedulerEnabled {
+			continue
+		}
+		enabled++
 		next, err := nextRunForGenerator(ctx, h.SchedulerStateRepo, item, now)
 		if err != nil {
 			return ports.RegisteredGenerator{}, err
 		}
-		if bestTime.IsZero() || next.Before(bestTime) {
+		if next.After(now) {
+			if bestTime.IsZero() || next.Before(bestTime) {
+				best = item
+				bestTime = next
+			}
+			continue
+		}
+		if !foundDue || next.Before(bestTime) {
 			best = item
 			bestTime = next
+			foundDue = true
 		}
+	}
+	if enabled == 0 {
+		return ports.RegisteredGenerator{}, episode.ErrSchedulerDisabled
+	}
+	if !foundDue {
+		if bestTime.IsZero() {
+			return ports.RegisteredGenerator{}, episode.ErrNoGeneratorsDue
+		}
+		return ports.RegisteredGenerator{}, fmt.Errorf("%w: next run at %s", episode.ErrNoGeneratorsDue, bestTime.Format(time.RFC3339))
 	}
 	return best, nil
 }
@@ -350,13 +382,26 @@ func (h Handler) publish(ctx context.Context, record episode.Record, artist epis
 	return results, presentation
 }
 
-func pickTemplateForType(u domainuniverse.Universe, outputType, fallback string) string {
+func resolveTemplateForType(u domainuniverse.Universe, outputType, fallback string) string {
+	if tmpl, ok := u.Templates[fallback]; ok && templateMatchesType(tmpl, outputType) {
+		return fallback
+	}
+	matches := make([]string, 0)
 	for id, tmpl := range u.Templates {
-		if v, ok := tmpl.Data["output_type"].(string); ok && v == outputType {
-			return id
+		if templateMatchesType(tmpl, outputType) {
+			matches = append(matches, id)
 		}
 	}
-	return ""
+	sort.Strings(matches)
+	if len(matches) == 0 {
+		return ""
+	}
+	return matches[0]
+}
+
+func templateMatchesType(tmpl domainuniverse.Entity, outputType string) bool {
+	v, ok := tmpl.Data["output_type"].(string)
+	return ok && v == outputType
 }
 
 func enrichBriefWithUniverseData(brief episode.Brief, u domainuniverse.Universe) episode.Brief {
@@ -446,7 +491,6 @@ func applyArtistOverrides(lens *episode.ArtistLens, cfg ports.GeneratorConfig) {
 			lens.Presentation.AllowedChannels = value
 		}
 	}
-	lens.NonDiegetic = true
 }
 
 func artistVisualReferences(refs []episode.VisualReference, artistID string) []episode.VisualReference {
@@ -530,14 +574,88 @@ func combosToKeys(combos []episode.Combo) []string {
 }
 
 func sanitizeSecrets(values map[string]any) map[string]any {
+	if len(values) == 0 {
+		return nil
+	}
 	out := make(map[string]any, len(values))
 	for key, value := range values {
-		lower := strings.ToLower(key)
-		if strings.Contains(lower, "key") || strings.Contains(lower, "token") || strings.Contains(lower, "secret") {
-			out[key] = "***"
-			continue
-		}
-		out[key] = value
+		out[key] = sanitizeSecretValue(key, value)
 	}
 	return out
+}
+
+func sanitizeSecretValue(key string, value any) any {
+	if secretKey(key) {
+		return "***"
+	}
+	return sanitizeNestedSecrets(value)
+}
+
+func sanitizeNestedSecrets(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(typed))
+		for key, nested := range typed {
+			out[key] = sanitizeSecretValue(key, nested)
+		}
+		return out
+	case []any:
+		out := make([]any, 0, len(typed))
+		for _, item := range typed {
+			out = append(out, sanitizeNestedSecrets(item))
+		}
+		return out
+	default:
+		return value
+	}
+}
+
+func secretKey(key string) bool {
+	lower := strings.ToLower(strings.TrimSpace(key))
+	return strings.Contains(lower, "key") ||
+		strings.Contains(lower, "token") ||
+		strings.Contains(lower, "secret") ||
+		strings.Contains(lower, "authorization")
+}
+
+func publishFailureError(results map[string]any, targets []publication.ChannelName) error {
+	if len(targets) == 0 || len(publishedChannels(results)) > 0 {
+		return nil
+	}
+	failures := make([]string, 0, len(targets))
+	for _, target := range targets {
+		value, ok := results[string(target)]
+		if !ok {
+			failures = append(failures, string(target)+": publish result missing")
+			continue
+		}
+		switch typed := value.(type) {
+		case publication.Result:
+			if !typed.Success {
+				failures = append(failures, string(target)+": "+firstNonEmpty(typed.Message, "publish failed"))
+			}
+		case map[string]any:
+			errMsg, _ := typed["error"].(string)
+			if strings.TrimSpace(errMsg) == "" {
+				errMsg = "publish failed"
+			}
+			failures = append(failures, string(target)+": "+errMsg)
+		default:
+			failures = append(failures, string(target)+": publish failed")
+		}
+	}
+	if len(failures) == 0 {
+		return episode.ErrPublishFailed
+	}
+	sort.Strings(failures)
+	return fmt.Errorf("%w: %s", episode.ErrPublishFailed, strings.Join(failures, "; "))
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }

@@ -21,6 +21,7 @@ type GeneratorConfig struct {
 	ProfileID             string
 	Type                  episode.OutputType
 	Style                 string
+	SchedulerEnabled      bool
 	PublishTargets        []publication.ChannelName
 	Scheduler             scheduling.Config
 	Seed                  int64

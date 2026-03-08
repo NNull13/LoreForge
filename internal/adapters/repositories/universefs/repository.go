@@ -300,6 +300,9 @@ func loadAssetsMetadata(dir string) ([]domainuniverse.Asset, error) {
 	}
 	out := make([]domainuniverse.Asset, 0, len(file.Assets))
 	for _, item := range file.Assets {
+		if err := validateDeclaredAssetFileName(item.FileName); err != nil {
+			return nil, fmt.Errorf("%s asset %q invalid: %w", path, item.FileName, err)
+		}
 		assetPath := filepath.Join(dir, item.FileName)
 		if _, err := os.Stat(assetPath); err != nil {
 			return nil, fmt.Errorf("%s references missing asset %s", path, item.FileName)
@@ -388,6 +391,22 @@ func mediaTypeFromExt(name string) string {
 		return "video"
 	default:
 		return ""
+	}
+}
+
+func validateDeclaredAssetFileName(name string) error {
+	name = strings.TrimSpace(name)
+	switch {
+	case name == "":
+		return errors.New("file is required")
+	case filepath.IsAbs(name):
+		return errors.New("absolute paths are not allowed")
+	case filepath.Base(name) != name:
+		return errors.New("subdirectories are not allowed")
+	case strings.Contains(name, ".."):
+		return errors.New("path traversal is not allowed")
+	default:
+		return nil
 	}
 }
 

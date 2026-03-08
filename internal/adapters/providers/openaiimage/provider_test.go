@@ -3,8 +3,9 @@ package openaiimage
 import (
 	"context"
 	"encoding/base64"
+	"io"
 	"net/http"
-	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"loreforge/internal/adapters/providers/contracts"
@@ -13,11 +14,16 @@ import (
 
 func TestGenerateImageFromBase64(t *testing.T) {
 	raw := base64.StdEncoding.EncodeToString([]byte("pngdata"))
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"data":[{"b64_json":"` + raw + `","revised_prompt":"revised"}]}`))
-	}))
-	defer server.Close()
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path != "/v1/images/generations" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"data":[{"b64_json":"` + raw + `","revised_prompt":"revised"}]}`)),
+		}, nil
+	})}
 
 	t.Setenv("OPENAI_API_KEY", "test-key")
 	provider := Provider{
@@ -25,10 +31,10 @@ func TestGenerateImageFromBase64(t *testing.T) {
 			Driver:    "openai_image",
 			Model:     "gpt-image-1.5",
 			APIKeyEnv: "OPENAI_API_KEY",
-			BaseURL:   server.URL,
+			BaseURL:   "https://api.openai.test/v1",
 			Options:   map[string]any{"response_format": "b64_json"},
 		},
-		HTTP: server.Client(),
+		HTTP: client,
 	}
 
 	resp, err := provider.GenerateImage(context.Background(), contracts.ImageRequest{Prompt: "castle"})
@@ -41,4 +47,10 @@ func TestGenerateImageFromBase64(t *testing.T) {
 	if resp.RevisedPrompt != "revised" {
 		t.Fatalf("unexpected revised prompt: %s", resp.RevisedPrompt)
 	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
 }

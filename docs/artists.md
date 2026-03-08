@@ -99,6 +99,18 @@ artists:
 - `id`: runtime generator/job id
 - `profile_id`: editorial profile id from the universe
 
+Both values are validated as safe identifiers:
+
+- only letters, numbers, `_`, and `-`
+- no path separators
+- no `..`
+
+Scheduling is separate from artist enablement:
+
+- `enabled: false` removes the runtime generator entirely
+- `scheduler.enabled: false` keeps the artist available for explicit manual generation, but excludes it from `run`, `scheduler next-run`, and automatic scheduler state creation
+- `artists list` shows these artists as `next_run=disabled`
+
 ## Presentation model
 
 Supported `signature_mode` values:

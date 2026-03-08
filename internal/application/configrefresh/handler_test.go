@@ -23,8 +23,8 @@ func TestHandlePreservesExistingAndCreatesMissing(t *testing.T) {
 	handler := Handler{
 		Registry: fakeRefreshRegistry{
 			items: []ports.RegisteredGenerator{
-				{Config: ports.GeneratorConfig{ID: "existing-artist", Scheduler: scheduling.Config{Mode: scheduling.ModeFixedInterval, FixedInterval: time.Hour, Timezone: "UTC"}}},
-				{Config: ports.GeneratorConfig{ID: "new-artist", Scheduler: scheduling.Config{Mode: scheduling.ModeFixedInterval, FixedInterval: time.Hour, Timezone: "UTC"}}},
+				{Config: ports.GeneratorConfig{ID: "existing-artist", SchedulerEnabled: true, Scheduler: scheduling.Config{Mode: scheduling.ModeFixedInterval, FixedInterval: time.Hour, Timezone: "UTC"}}},
+				{Config: ports.GeneratorConfig{ID: "new-artist", SchedulerEnabled: true, Scheduler: scheduling.Config{Mode: scheduling.ModeFixedInterval, FixedInterval: time.Hour, Timezone: "UTC"}}},
 			},
 		},
 		SchedulerStateRepo: repo,
@@ -46,6 +46,29 @@ func TestHandlePreservesExistingAndCreatesMissing(t *testing.T) {
 	}
 	if _, ok := repo.saved["new-artist"]; !ok {
 		t.Fatal("expected scheduler state to be created for new artist")
+	}
+}
+
+func TestHandleSkipsDisabledSchedulersWithoutExistingState(t *testing.T) {
+	t.Parallel()
+
+	repo := &fakeSchedulerRepo{}
+	handler := Handler{
+		Registry: fakeRefreshRegistry{
+			items: []ports.RegisteredGenerator{
+				{Config: ports.GeneratorConfig{ID: "disabled-artist", SchedulerEnabled: false}},
+			},
+		},
+		SchedulerStateRepo: repo,
+		Clock:              fakeRefreshClock{now: time.Now().UTC()},
+	}
+
+	result, err := handler.Handle(context.Background())
+	if err != nil {
+		t.Fatalf("Handle returned error: %v", err)
+	}
+	if len(result.Created) != 0 || len(repo.saved) != 0 {
+		t.Fatalf("expected disabled scheduler to skip creation: %#v %#v", result, repo.saved)
 	}
 }
 

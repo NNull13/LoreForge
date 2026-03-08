@@ -46,12 +46,16 @@ func (p *Planner) BuildBrief(u universe.Universe, recent []HistoryCombo) (episod
 	if err != nil {
 		return episode.Brief{}, err
 	}
+	return p.BuildBriefForType(u, episodeType, recent)
+}
+
+func (p *Planner) BuildBriefForType(u universe.Universe, outputType string, recent []HistoryCombo) (episode.Brief, error) {
 	worldID := pickKey(p.rng, u.Worlds)
 	eventID, err := pickOne(p.rng, compatibleEventIDs(u, worldID))
 	if err != nil {
 		return episode.Brief{}, err
 	}
-	templateID, err := p.pickTemplate(u, episodeType)
+	templateID, err := p.pickTemplate(u, outputType)
 	if err != nil {
 		return episode.Brief{}, err
 	}
@@ -82,14 +86,14 @@ func (p *Planner) BuildBrief(u universe.Universe, recent []HistoryCombo) (episod
 	}
 
 	brief := episode.Brief{
-		EpisodeType:  episode.OutputType(episodeType),
+		EpisodeType:  episode.OutputType(outputType),
 		WorldID:      worldID,
 		CharacterIDs: charIDs,
 		EventID:      eventID,
 		TemplateID:   templateID,
 		Tone:         p.universeTone(u),
 		Objective:    "Expand canon while preserving coherence",
-		CanonRules:   p.collectRules(u, episodeType),
+		CanonRules:   p.collectRules(u, outputType),
 	}
 	return brief, nil
 }

@@ -162,6 +162,79 @@ Artist body.`)
 	}
 }
 
+func TestLoadRejectsUnsafeDeclaredAssetPaths(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		file string
+	}{
+		{name: "path traversal", file: "../escape.png"},
+		{name: "subdirectory", file: "nested/escape.png"},
+		{name: "absolute", file: "/tmp/escape.png"},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			root := t.TempDir()
+			writeEntityFile(t, filepath.Join(root, "universe", "universe.md"), `---
+id: no-name-universe
+type: universe
+---
+Root body.`)
+			writeFile(t, filepath.Join(root, "universe", "assets.yaml"), "assets:\n  - file: "+tt.file+"\n    usage: environment_reference\n")
+			writeEntityFile(t, filepath.Join(root, "characters", "panda", "panda.md"), `---
+id: panda
+type: character
+---
+Character body.`)
+			writeEntityFile(t, filepath.Join(root, "artists", "ash-chorister", "artist.md"), `---
+id: ash-chorister
+name: Ash Chorister
+role: chronicler
+summary: A solemn witness.
+non_diegietic: true
+mission:
+  purpose: Preserve canon.
+prompting:
+  system_identity: You are The Ash Chorister.
+presentation:
+  enabled: true
+  signature_mode: presentation_only
+  framing_mode: none
+---
+Artist body.`)
+			writeEntityFile(t, filepath.Join(root, "worlds", "bamboo-forest", "bamboo-forest.md"), `---
+id: bamboo-forest
+type: world
+---
+World body.`)
+			writeEntityFile(t, filepath.Join(root, "events", "moon-festival", "moon-festival.md"), `---
+id: moon-festival
+type: event
+---
+Event body.`)
+			writeEntityFile(t, filepath.Join(root, "templates", "short-story", "short-story.md"), `---
+id: short-story
+type: template
+output_type: short_story
+---
+Template body.`)
+			writeEntityFile(t, filepath.Join(root, "rules", "global-rules", "global-rules.md"), `---
+id: global-rules
+type: rule
+---
+Rule body.`)
+
+			repo := Repository{Root: root}
+			if _, err := repo.Load(context.Background()); err == nil {
+				t.Fatal("expected unsafe asset path error")
+			}
+		})
+	}
+}
+
 func writeEntityFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

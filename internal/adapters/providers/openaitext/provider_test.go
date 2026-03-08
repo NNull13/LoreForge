@@ -2,9 +2,10 @@ package openaitext
 
 import (
 	"context"
+	"io"
 	"net/http"
-	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	"loreforge/internal/adapters/providers/contracts"
@@ -15,13 +16,16 @@ import (
 func TestGenerateTextStructured(t *testing.T) {
 	t.Parallel()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/responses" {
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path != "/v1/responses" {
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
-		_, _ = w.Write([]byte(`{"output_text":"{\"parts\":[\"tweet one\",\"tweet two\"]}","output":[{"status":"completed","content":[{"type":"output_text","text":"{\"parts\":[\"tweet one\",\"tweet two\"]}"}]}]}`))
-	}))
-	defer server.Close()
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"output_text":"{\"parts\":[\"tweet one\",\"tweet two\"]}","output":[{"status":"completed","content":[{"type":"output_text","text":"{\"parts\":[\"tweet one\",\"tweet two\"]}"}]}]}`)),
+		}, nil
+	})}
 
 	if err := os.Setenv("OPENAI_API_KEY", "test-token"); err != nil {
 		t.Fatalf("Setenv failed: %v", err)
@@ -33,8 +37,9 @@ func TestGenerateTextStructured(t *testing.T) {
 			Driver:    "openai_text",
 			Model:     "gpt-5-mini",
 			APIKeyEnv: "OPENAI_API_KEY",
-			BaseURL:   server.URL,
+			BaseURL:   "https://api.openai.test/v1",
 		},
+		HTTP: client,
 	}
 
 	resp, err := provider.GenerateText(context.Background(), contracts.TextRequest{
@@ -49,4 +54,10 @@ func TestGenerateTextStructured(t *testing.T) {
 	if len(resp.Parts) != 2 {
 		t.Fatalf("unexpected parts: %#v", resp.Parts)
 	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
 }

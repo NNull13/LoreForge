@@ -20,13 +20,14 @@ func TestHandleReturnsArtistProfilesAndNextRun(t *testing.T) {
 			items: []ports.RegisteredGenerator{
 				{
 					Config: ports.GeneratorConfig{
-						ID:             "short-story-artist",
-						ProfileID:      "ash-chorister",
-						Type:           episode.OutputTypeShortStory,
-						ProviderDriver: "openai_text",
-						ProviderModel:  "gpt-5-mini",
-						PublishTargets: nil,
-						Scheduler:      scheduling.Config{Mode: scheduling.ModeFixedInterval, FixedInterval: time.Hour, Timezone: "UTC"},
+						ID:               "short-story-artist",
+						ProfileID:        "ash-chorister",
+						Type:             episode.OutputTypeShortStory,
+						ProviderDriver:   "openai_text",
+						ProviderModel:    "gpt-5-mini",
+						SchedulerEnabled: true,
+						PublishTargets:   nil,
+						Scheduler:        scheduling.Config{Mode: scheduling.ModeFixedInterval, FixedInterval: time.Hour, Timezone: "UTC"},
 					},
 				},
 			},
@@ -52,8 +53,38 @@ func TestHandleReturnsArtistProfilesAndNextRun(t *testing.T) {
 	if items[0].ArtistName != "The Ash Chorister" {
 		t.Fatalf("unexpected artist name: %s", items[0].ArtistName)
 	}
-	if !items[0].NextRun.Equal(now.Add(3 * time.Hour)) {
-		t.Fatalf("unexpected next run: %s", items[0].NextRun)
+	if items[0].NextRun == nil || !items[0].NextRun.Equal(now.Add(3*time.Hour)) {
+		t.Fatalf("unexpected next run: %v", items[0].NextRun)
+	}
+}
+
+func TestHandleReturnsDisabledSchedulerWithoutNextRun(t *testing.T) {
+	t.Parallel()
+
+	handler := Handler{
+		Registry: fakeListRegistry{
+			items: []ports.RegisteredGenerator{
+				{
+					Config: ports.GeneratorConfig{
+						ID:               "short-story-artist",
+						ProfileID:        "ash-chorister",
+						Type:             episode.OutputTypeShortStory,
+						SchedulerEnabled: false,
+					},
+				},
+			},
+		},
+		SchedulerStateRepo: fakeListSchedulerRepo{},
+		Clock:              fakeListClock{now: time.Now().UTC()},
+		Universe:           domainuniverse.Universe{Artists: map[string]domainuniverse.Artist{}},
+	}
+
+	items, err := handler.Handle(context.Background())
+	if err != nil {
+		t.Fatalf("Handle returned error: %v", err)
+	}
+	if len(items) != 1 || items[0].NextRun != nil || items[0].SchedulerEnabled {
+		t.Fatalf("unexpected disabled scheduler result: %#v", items)
 	}
 }
 

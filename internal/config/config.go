@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -34,7 +36,7 @@ type UniverseConfig struct {
 }
 
 type SchedulerConfig struct {
-	Enabled       bool   `yaml:"enabled"`
+	Enabled       *bool  `yaml:"enabled"`
 	Mode          string `yaml:"mode"`
 	MinInterval   string `yaml:"min_interval"`
 	MaxInterval   string `yaml:"max_interval"`
@@ -150,7 +152,6 @@ type LoggingConfig struct {
 
 func Load(path string) (Config, error) {
 	cfg := Config{
-		Scheduler: SchedulerConfig{Enabled: true},
 		Channels: ChannelsConfig{
 			Filesystem: FilesystemChannelConfig{Enabled: true},
 			Twitter:    TwitterChannelConfig{DryRun: true},
@@ -174,14 +175,7 @@ func (c *Config) Validate(configDir string) error {
 	if c.Universe.Path == "" {
 		return errors.New("universe.path is required")
 	}
-	if !filepath.IsAbs(c.Universe.Path) {
-		candidate := filepath.Clean(filepath.Join(configDir, c.Universe.Path))
-		if _, err := os.Stat(candidate); err == nil {
-			c.Universe.Path = candidate
-		} else {
-			c.Universe.Path = filepath.Clean(c.Universe.Path)
-		}
-	}
+	c.Universe.Path = resolveConfigPath(configDir, c.Universe.Path)
 
 	if c.Scheduler.Mode == "" {
 		c.Scheduler.Mode = "random_window"
@@ -192,7 +186,7 @@ func (c *Config) Validate(configDir string) error {
 	if c.Scheduler.Timezone == "" {
 		c.Scheduler.Timezone = "UTC"
 	}
-	if err := validateScheduler(c.Scheduler, c.Scheduler.Enabled); err != nil {
+	if err := validateScheduler(c.Scheduler, schedulerEnabled(c.Scheduler.Enabled)); err != nil {
 		return err
 	}
 
@@ -226,6 +220,7 @@ func (c *Config) Validate(configDir string) error {
 	if c.Memory.DSN == "" {
 		c.Memory.DSN = "./data/universe.db"
 	}
+	c.Memory.DSN = resolveConfigPath(configDir, c.Memory.DSN)
 	if c.Memory.Driver == "" {
 		c.Memory.Driver = "sqlite"
 	}
@@ -236,6 +231,7 @@ func (c *Config) Validate(configDir string) error {
 	if c.Channels.Filesystem.Enabled && c.Channels.Filesystem.OutputDir == "" {
 		return errors.New("channels.filesystem.output_dir is required when enabled")
 	}
+	c.Channels.Filesystem.OutputDir = resolveConfigPath(configDir, c.Channels.Filesystem.OutputDir)
 	if c.Channels.Twitter.BaseURL == "" {
 		c.Channels.Twitter.BaseURL = "https://api.twitter.com"
 	}
@@ -325,15 +321,7 @@ func (c *Config) applyArtistDefaults(a *ArtistConfig) {
 	if a.Enabled == nil {
 		a.Enabled = boolPtr(true)
 	}
-	if a.Scheduler.Mode == "" {
-		a.Scheduler = c.Scheduler
-	}
-	if a.Scheduler.Seed == 0 {
-		a.Scheduler.Seed = c.Scheduler.Seed
-	}
-	if a.Scheduler.Timezone == "" {
-		a.Scheduler.Timezone = c.Scheduler.Timezone
-	}
+	a.Scheduler = mergeSchedulerConfig(c.Scheduler, a.Scheduler)
 	if len(a.PublishTargets) == 0 {
 		if c.Channels.Filesystem.Enabled {
 			a.PublishTargets = []string{"filesystem"}
@@ -386,6 +374,10 @@ func (c *Config) applyArtistDefaults(a *ArtistConfig) {
 
 func boolPtr(v bool) *bool { return &v }
 
+func schedulerEnabled(enabled *bool) bool {
+	return enabled == nil || *enabled
+}
+
 func (c *Config) validateArtists() error {
 	if len(c.Artists) == 0 {
 		return errors.New("at least one artist is required")
@@ -397,8 +389,14 @@ func (c *Config) validateArtists() error {
 		if a.ID == "" {
 			return fmt.Errorf("artists[%d].id is required", i)
 		}
+		if err := validateIdentifier("id", a.ID); err != nil {
+			return fmt.Errorf("artist %s %w", a.ID, err)
+		}
 		if a.ProfileID == "" {
 			return fmt.Errorf("artist %s profile_id is required", a.ID)
+		}
+		if err := validateIdentifier("profile_id", a.ProfileID); err != nil {
+			return fmt.Errorf("artist %s %w", a.ID, err)
 		}
 		if seen[a.ID] {
 			return fmt.Errorf("duplicate artist id: %s", a.ID)
@@ -419,7 +417,7 @@ func (c *Config) validateArtists() error {
 		if err := validateProviderDriver(*a); err != nil {
 			return err
 		}
-		if err := validateScheduler(a.Scheduler, true); err != nil {
+		if err := validateScheduler(a.Scheduler, schedulerEnabled(a.Scheduler.Enabled)); err != nil {
 			return fmt.Errorf("artist %s scheduler invalid: %w", a.ID, err)
 		}
 	}
@@ -554,6 +552,70 @@ func (c *Config) applyProviderDefaults() {
 	}
 	if c.Providers.Video.Version == "" {
 		c.Providers.Video.Version = "2024-11-06"
+	}
+}
+
+func mergeSchedulerConfig(base, override SchedulerConfig) SchedulerConfig {
+	out := base
+	if override.Enabled != nil {
+		out.Enabled = override.Enabled
+	}
+	if override.Mode != "" {
+		out.Mode = override.Mode
+	}
+	if override.MinInterval != "" {
+		out.MinInterval = override.MinInterval
+	}
+	if override.MaxInterval != "" {
+		out.MaxInterval = override.MaxInterval
+	}
+	if override.FixedInterval != "" {
+		out.FixedInterval = override.FixedInterval
+	}
+	if override.Seed != 0 {
+		out.Seed = override.Seed
+	}
+	if override.Timezone != "" {
+		out.Timezone = override.Timezone
+	}
+	return out
+}
+
+var identifierPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
+func validateIdentifier(field, value string) error {
+	if strings.TrimSpace(value) == "" {
+		return fmt.Errorf("%s is required", field)
+	}
+	if !identifierPattern.MatchString(value) {
+		return fmt.Errorf("%s must use only letters, numbers, '_' or '-'", field)
+	}
+	if filepath.Base(value) != value || strings.Contains(value, "..") {
+		return fmt.Errorf("%s must not contain path separators", field)
+	}
+	return nil
+}
+
+func resolveConfigPath(configDir, value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || !shouldResolveRelativePath(value) {
+		return value
+	}
+	return filepath.Clean(filepath.Join(configDir, value))
+}
+
+func shouldResolveRelativePath(value string) bool {
+	switch {
+	case value == "", value == ":memory:":
+		return false
+	case filepath.IsAbs(value):
+		return false
+	case strings.Contains(value, "://"):
+		return false
+	case strings.HasPrefix(value, "file:"):
+		return false
+	default:
+		return true
 	}
 }
 

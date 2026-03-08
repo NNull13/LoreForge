@@ -31,11 +31,12 @@ func TestHandleGeneratesAndPublishesEpisode(t *testing.T) {
 				{
 					Generator: fakeGenerator{id: "short-story-artist", outputType: episode.OutputTypeShortStory, content: "Aria walks through the ash garden and hears Kade whisper from the gate while the city keeps their old oath alive."},
 					Config: ports.GeneratorConfig{
-						ID:             "short-story-artist",
-						ProfileID:      "ash-chorister",
-						Type:           episode.OutputTypeShortStory,
-						Style:          "lyrical-canon",
-						PublishTargets: []publication.ChannelName{publication.ChannelFilesystem},
+						ID:               "short-story-artist",
+						ProfileID:        "ash-chorister",
+						Type:             episode.OutputTypeShortStory,
+						Style:            "lyrical-canon",
+						SchedulerEnabled: true,
+						PublishTargets:   []publication.ChannelName{publication.ChannelFilesystem},
 						Scheduler: scheduling.Config{
 							Mode:          scheduling.ModeFixedInterval,
 							FixedInterval: time.Hour,
@@ -52,7 +53,7 @@ func TestHandleGeneratesAndPublishesEpisode(t *testing.T) {
 		Planner:           planner.New(planner.Config{Weights: map[string]int{"short_story": 100}, Seed: 1, RecencyWindow: 5}),
 	}
 
-	result, err := handler.Handle(context.Background(), Request{MaxRetries: 1, RecencyWindow: 5})
+	result, err := handler.Handle(context.Background(), Request{Generator: "short-story-artist", MaxRetries: 1, RecencyWindow: 5})
 	if err != nil {
 		t.Fatalf("Handle returned error: %v", err)
 	}
@@ -89,10 +90,11 @@ func TestHandleRetriesInvalidOutput(t *testing.T) {
 						},
 					},
 					Config: ports.GeneratorConfig{
-						ID:        "short-story-artist",
-						ProfileID: "ash-chorister",
-						Type:      episode.OutputTypeShortStory,
-						Scheduler: scheduling.Config{Mode: scheduling.ModeFixedInterval, FixedInterval: time.Hour, Timezone: "UTC"},
+						ID:               "short-story-artist",
+						ProfileID:        "ash-chorister",
+						Type:             episode.OutputTypeShortStory,
+						SchedulerEnabled: true,
+						Scheduler:        scheduling.Config{Mode: scheduling.ModeFixedInterval, FixedInterval: time.Hour, Timezone: "UTC"},
 					},
 				},
 			},
@@ -104,7 +106,7 @@ func TestHandleRetriesInvalidOutput(t *testing.T) {
 		Planner:           planner.New(planner.Config{Weights: map[string]int{"short_story": 100}, Seed: 2, RecencyWindow: 5}),
 	}
 
-	result, err := handler.Handle(context.Background(), Request{MaxRetries: 2, RecencyWindow: 5})
+	result, err := handler.Handle(context.Background(), Request{Generator: "short-story-artist", MaxRetries: 2, RecencyWindow: 5})
 	if err != nil {
 		t.Fatalf("Handle returned error: %v", err)
 	}
@@ -113,11 +115,552 @@ func TestHandleRetriesInvalidOutput(t *testing.T) {
 	}
 }
 
+func TestHandleReturnsNoGeneratorsDue(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 3, 8, 12, 0, 0, 0, time.UTC)
+	handler := Handler{
+		UniverseRepo:       fakeUniverseRepo{universe: testUniverse()},
+		EpisodeRepo:        &fakeEpisodeRepo{},
+		SchedulerStateRepo: &fakeSchedulerStateRepo{states: map[string]scheduling.State{"short-story-artist": {NextRunAt: now.Add(time.Hour)}}},
+		GeneratorRegistry: fakeGeneratorRegistry{
+			items: []ports.RegisteredGenerator{
+				{
+					Generator: fakeGenerator{id: "short-story-artist", outputType: episode.OutputTypeShortStory, content: validStory()},
+					Config: ports.GeneratorConfig{
+						ID:               "short-story-artist",
+						ProfileID:        "ash-chorister",
+						Type:             episode.OutputTypeShortStory,
+						SchedulerEnabled: true,
+						Scheduler:        scheduling.Config{Mode: scheduling.ModeFixedInterval, FixedInterval: time.Hour, Timezone: "UTC"},
+					},
+				},
+			},
+		},
+		PublisherRegistry: fakePublisherRegistry{},
+		Clock:             fakeClock{now: now},
+		IDGenerator:       fakeIDGen{id: "ep-due"},
+		Hasher:            fakeHasher{value: "hash"},
+		Planner:           planner.New(planner.Config{Weights: map[string]int{"short_story": 100}, Seed: 3, RecencyWindow: 5}),
+	}
+
+	_, err := handler.Handle(context.Background(), Request{MaxRetries: 1, RecencyWindow: 5})
+	if !errors.Is(err, episode.ErrNoGeneratorsDue) {
+		t.Fatalf("err = %v, want no generators due", err)
+	}
+}
+
+func TestHandleReturnsSchedulerDisabledWhenAutoRunHasNoEnabledArtists(t *testing.T) {
+	t.Parallel()
+
+	handler := Handler{
+		UniverseRepo:       fakeUniverseRepo{universe: testUniverse()},
+		EpisodeRepo:        &fakeEpisodeRepo{},
+		SchedulerStateRepo: &fakeSchedulerStateRepo{},
+		GeneratorRegistry: fakeGeneratorRegistry{
+			items: []ports.RegisteredGenerator{
+				{
+					Generator: fakeGenerator{id: "short-story-artist", outputType: episode.OutputTypeShortStory, content: validStory()},
+					Config: ports.GeneratorConfig{
+						ID:               "short-story-artist",
+						ProfileID:        "ash-chorister",
+						Type:             episode.OutputTypeShortStory,
+						SchedulerEnabled: false,
+					},
+				},
+			},
+		},
+		PublisherRegistry: fakePublisherRegistry{},
+		Clock:             fakeClock{now: time.Now().UTC()},
+		IDGenerator:       fakeIDGen{id: "ep-disabled"},
+		Hasher:            fakeHasher{value: "hash"},
+		Planner:           planner.New(planner.Config{Weights: map[string]int{"short_story": 100}, Seed: 4, RecencyWindow: 5}),
+	}
+
+	_, err := handler.Handle(context.Background(), Request{MaxRetries: 1, RecencyWindow: 5})
+	if !errors.Is(err, episode.ErrSchedulerDisabled) {
+		t.Fatalf("err = %v, want scheduler disabled", err)
+	}
+}
+
+func TestHandleMarksPublishFailedAndPersistsRecord(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 3, 8, 12, 0, 0, 0, time.UTC)
+	repo := &fakeEpisodeRepo{}
+	handler := Handler{
+		UniverseRepo:       fakeUniverseRepo{universe: testUniverse()},
+		EpisodeRepo:        repo,
+		SchedulerStateRepo: &fakeSchedulerStateRepo{},
+		GeneratorRegistry: fakeGeneratorRegistry{
+			items: []ports.RegisteredGenerator{
+				{
+					Generator: fakeGenerator{id: "short-story-artist", outputType: episode.OutputTypeShortStory, content: validStory()},
+					Config: ports.GeneratorConfig{
+						ID:               "short-story-artist",
+						ProfileID:        "ash-chorister",
+						Type:             episode.OutputTypeShortStory,
+						SchedulerEnabled: true,
+						PublishTargets:   []publication.ChannelName{publication.ChannelFilesystem},
+						Scheduler:        scheduling.Config{Mode: scheduling.ModeFixedInterval, FixedInterval: time.Hour, Timezone: "UTC"},
+					},
+				},
+			},
+		},
+		PublisherRegistry: fakePublisherRegistry{
+			publisher: fakeStaticPublisher{
+				name: publication.ChannelFilesystem,
+				err:  errors.New("disk full"),
+			},
+		},
+		Clock:       fakeClock{now: now},
+		IDGenerator: fakeIDGen{id: "ep-fail"},
+		Hasher:      fakeHasher{value: "hash"},
+		Planner:     planner.New(planner.Config{Weights: map[string]int{"short_story": 100}, Seed: 5, RecencyWindow: 5}),
+	}
+
+	result, err := handler.Handle(context.Background(), Request{Generator: "short-story-artist", MaxRetries: 1, RecencyWindow: 5})
+	if !errors.Is(err, episode.ErrPublishFailed) {
+		t.Fatalf("err = %v, want publish failed", err)
+	}
+	if result.Stored.Path == "" {
+		t.Fatal("expected persisted result even on publish failure")
+	}
+	if repo.saved.Manifest.State != string(episode.StatusPublishFailed) {
+		t.Fatalf("state = %s, want publish_failed", repo.saved.Manifest.State)
+	}
+}
+
+func TestHandleAcceptsPartialPublishSuccess(t *testing.T) {
+	t.Parallel()
+
+	handler := Handler{
+		UniverseRepo:       fakeUniverseRepo{universe: testUniverse()},
+		EpisodeRepo:        &fakeEpisodeRepo{},
+		SchedulerStateRepo: &fakeSchedulerStateRepo{},
+		GeneratorRegistry: fakeGeneratorRegistry{
+			items: []ports.RegisteredGenerator{
+				{
+					Generator: fakeGenerator{id: "short-story-artist", outputType: episode.OutputTypeShortStory, content: validStory()},
+					Config: ports.GeneratorConfig{
+						ID:               "short-story-artist",
+						ProfileID:        "ash-chorister",
+						Type:             episode.OutputTypeShortStory,
+						SchedulerEnabled: true,
+						PublishTargets:   []publication.ChannelName{publication.ChannelFilesystem, publication.ChannelTwitter},
+						Scheduler:        scheduling.Config{Mode: scheduling.ModeFixedInterval, FixedInterval: time.Hour, Timezone: "UTC"},
+					},
+				},
+			},
+		},
+		PublisherRegistry: fakePublisherRegistry{
+			publishers: map[publication.ChannelName]ports.Publisher{
+				publication.ChannelFilesystem: fakeStaticPublisher{
+					name: publication.ChannelFilesystem,
+					result: publication.Result{
+						Channel:    "filesystem",
+						Success:    true,
+						ExternalID: "/tmp/out.txt",
+					},
+				},
+				publication.ChannelTwitter: fakeStaticPublisher{
+					name: publication.ChannelTwitter,
+					err:  errors.New("twitter down"),
+				},
+			},
+		},
+		Clock:       fakeClock{now: time.Now().UTC()},
+		IDGenerator: fakeIDGen{id: "ep-partial"},
+		Hasher:      fakeHasher{value: "hash"},
+		Planner:     planner.New(planner.Config{Weights: map[string]int{"short_story": 100}, Seed: 6, RecencyWindow: 5}),
+	}
+
+	result, err := handler.Handle(context.Background(), Request{Generator: "short-story-artist", MaxRetries: 1, RecencyWindow: 5})
+	if err != nil {
+		t.Fatalf("Handle returned error: %v", err)
+	}
+	if !result.Record.Manifest.Published || result.Record.Manifest.State != string(episode.StatusPublished) {
+		t.Fatalf("unexpected publish state: %#v", result.Record.Manifest)
+	}
+	if len(result.Record.Manifest.Channels) != 1 || result.Record.Manifest.Channels[0] != "filesystem" {
+		t.Fatalf("unexpected published channels: %#v", result.Record.Manifest.Channels)
+	}
+}
+
+func TestResolveTemplateForTypeKeepsCompatibleFallback(t *testing.T) {
+	t.Parallel()
+
+	u := testUniverse()
+	u.Templates["alt-template"] = domainuniverse.Entity{
+		ID:   "alt-template",
+		Type: "template",
+		Data: map[string]any{"output_type": "short_story"},
+	}
+	if got := resolveTemplateForType(u, "short_story", "alt-template"); got != "alt-template" {
+		t.Fatalf("resolveTemplateForType = %q, want alt-template", got)
+	}
+}
+
+func TestBuildArtistLensPreservesNonDiegeticFlag(t *testing.T) {
+	t.Parallel()
+
+	profile := testUniverse().Artists["ash-chorister"]
+	profile.NonDiegetic = false
+
+	lens := buildArtistLens(profile, ports.GeneratorConfig{})
+	if lens.NonDiegetic {
+		t.Fatal("expected artist lens to preserve non-diegetic=false")
+	}
+}
+
+func TestSanitizeSecretsRedactsNestedValues(t *testing.T) {
+	t.Parallel()
+
+	sanitized := sanitizeSecrets(map[string]any{
+		"api_key": "secret",
+		"nested": map[string]any{
+			"authorization": "Bearer token",
+			"value":         "keep",
+		},
+		"items": []any{
+			map[string]any{"token": "secret"},
+			"safe",
+		},
+	})
+	if sanitized["api_key"] != "***" {
+		t.Fatalf("expected top-level key redaction: %#v", sanitized)
+	}
+	nested := sanitized["nested"].(map[string]any)
+	if nested["authorization"] != "***" || nested["value"] != "keep" {
+		t.Fatalf("unexpected nested redaction: %#v", nested)
+	}
+	items := sanitized["items"].([]any)
+	if items[0].(map[string]any)["token"] != "***" || items[1] != "safe" {
+		t.Fatalf("unexpected array redaction: %#v", items)
+	}
+}
+
+func TestBootstrapRunwayImageUsesFallbackGenerator(t *testing.T) {
+	t.Parallel()
+
+	handler := Handler{
+		GeneratorRegistry: fakeGeneratorRegistry{
+			items: []ports.RegisteredGenerator{
+				{
+					Generator: fakeAssetGenerator{id: "image-artist", outputType: episode.OutputTypeImage, assetPath: "/tmp/bootstrap.png"},
+					Config: ports.GeneratorConfig{
+						ID:   "image-artist",
+						Type: episode.OutputTypeImage,
+					},
+				},
+			},
+		},
+	}
+	output, err := handler.bootstrapRunwayImage(context.Background(), Request{}, episode.Brief{}, episode.State{Metadata: map[string]any{}}, ports.RegisteredGenerator{
+		Config: ports.GeneratorConfig{
+			ID:             "video-artist",
+			ProviderDriver: "runway_gen4",
+			Options:        map[string]any{"bootstrap_image_generator": "image-artist"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("bootstrapRunwayImage returned error: %v", err)
+	}
+	if output.AssetPath != "/tmp/bootstrap.png" {
+		t.Fatalf("unexpected bootstrap asset: %#v", output)
+	}
+}
+
+func TestBootstrapRunwayImageUsesPromptImageReference(t *testing.T) {
+	t.Parallel()
+
+	handler := Handler{}
+	output, err := handler.bootstrapRunwayImage(context.Background(), Request{}, episode.Brief{
+		Objective: "Create scene",
+		VisualReferences: []episode.VisualReference{
+			{Path: "/tmp/reference.png", MediaType: "image", ModelRole: "prompt_image"},
+		},
+	}, episode.State{Metadata: map[string]any{}}, ports.RegisteredGenerator{})
+	if err != nil {
+		t.Fatalf("bootstrapRunwayImage returned error: %v", err)
+	}
+	if output.AssetPath != "/tmp/reference.png" || output.Provider != "universe_asset" {
+		t.Fatalf("unexpected prompt image output: %#v", output)
+	}
+}
+
+func TestResolveGeneratorAcceptsTypeAlias(t *testing.T) {
+	t.Parallel()
+
+	handler := Handler{
+		GeneratorRegistry: fakeGeneratorRegistry{
+			items: []ports.RegisteredGenerator{
+				{
+					Generator: fakeGenerator{id: "story-artist", outputType: episode.OutputTypeShortStory, content: validStory()},
+					Config: ports.GeneratorConfig{
+						ID:   "story-artist",
+						Type: episode.OutputTypeShortStory,
+					},
+				},
+			},
+		},
+	}
+	def, err := handler.resolveGenerator("short_story", context.Background())
+	if err != nil {
+		t.Fatalf("resolveGenerator returned error: %v", err)
+	}
+	if def.Config.ID != "story-artist" {
+		t.Fatalf("unexpected generator: %#v", def)
+	}
+}
+
+func TestApplyArtistOverridesAndHelpers(t *testing.T) {
+	t.Parallel()
+
+	lens := episode.ArtistLens{
+		Presentation: episode.ArtistPresentationSnapshot{},
+	}
+	applyArtistOverrides(&lens, ports.GeneratorConfig{
+		PromptOverrides: map[string]any{
+			"extra_system_rules": []any{"Rule A"},
+			"tonal_biases":       []any{"ritual"},
+			"lexical_cues":       []any{"ember"},
+			"forbidden":          []any{"slang"},
+		},
+		PresentationOverrides: map[string]any{
+			"enabled":          true,
+			"signature_mode":   "append",
+			"signature_text":   "Filed by the archive.",
+			"framing_mode":     "intro",
+			"intro_template":   "Intro",
+			"outro_template":   "Outro",
+			"allowed_channels": []any{"filesystem"},
+		},
+	})
+	if len(lens.PromptingRules) != 1 || lens.Presentation.SignatureMode != "append" || !lens.Presentation.Enabled {
+		t.Fatalf("unexpected overridden lens: %#v", lens)
+	}
+	if got := toStringSlice([]any{"a", "b"}); len(got) != 2 {
+		t.Fatalf("unexpected toStringSlice: %#v", got)
+	}
+	if got := firstNonEmpty("", "value"); got != "value" {
+		t.Fatalf("firstNonEmpty = %q, want value", got)
+	}
+}
+
+func TestPublishFailureErrorAndPublishedChannels(t *testing.T) {
+	t.Parallel()
+
+	results := map[string]any{
+		"filesystem": publication.Result{Channel: "filesystem", Success: true},
+		"twitter":    map[string]any{"success": false, "error": "timeout"},
+	}
+	channels := publishedChannels(results)
+	if len(channels) != 1 || channels[0] != "filesystem" {
+		t.Fatalf("unexpected published channels: %#v", channels)
+	}
+	if err := publishFailureError(results, []publication.ChannelName{publication.ChannelFilesystem, publication.ChannelTwitter}); err != nil {
+		t.Fatalf("expected partial success to suppress publish failure error: %v", err)
+	}
+	if err := publishFailureError(map[string]any{"twitter": map[string]any{"error": "timeout"}}, []publication.ChannelName{publication.ChannelTwitter}); !errors.Is(err, episode.ErrPublishFailed) {
+		t.Fatalf("unexpected publish failure error: %v", err)
+	}
+}
+
+func TestArtistVisualReferencesAndCombosToKeys(t *testing.T) {
+	t.Parallel()
+
+	refs := artistVisualReferences([]episode.VisualReference{
+		{EntityType: "artist", EntityID: "ash-chorister", AssetID: "brand"},
+		{EntityType: "character", EntityID: "aria", AssetID: "hero"},
+	}, "ash-chorister")
+	if len(refs) != 1 || refs[0].AssetID != "brand" {
+		t.Fatalf("unexpected artist refs: %#v", refs)
+	}
+	keys := combosToKeys([]episode.Combo{{WorldID: "ember-city", CharacterIDs: []string{"kade", "aria"}, EventID: "gate-whisper"}})
+	if len(keys) != 1 || keys[0] != "ember-city|aria,kade|gate-whisper" {
+		t.Fatalf("unexpected combo keys: %#v", keys)
+	}
+}
+
+func TestNextRunForGeneratorUsesSavedStateAndSchedulerFallback(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 3, 8, 12, 0, 0, 0, time.UTC)
+	def := ports.RegisteredGenerator{
+		Config: ports.GeneratorConfig{
+			ID:               "story-artist",
+			SchedulerEnabled: true,
+			Scheduler: scheduling.Config{
+				Mode:          scheduling.ModeFixedInterval,
+				FixedInterval: 2 * time.Hour,
+				Timezone:      "UTC",
+			},
+		},
+	}
+
+	next, err := nextRunForGenerator(context.Background(), &fakeSchedulerStateRepo{
+		states: map[string]scheduling.State{
+			"story-artist": {NextRunAt: now.Add(30 * time.Minute)},
+		},
+	}, def, now)
+	if err != nil {
+		t.Fatalf("nextRunForGenerator with state returned error: %v", err)
+	}
+	if want := now.Add(30 * time.Minute); !next.Equal(want) {
+		t.Fatalf("next run = %s, want %s", next, want)
+	}
+
+	next, err = nextRunForGenerator(context.Background(), &fakeSchedulerStateRepo{}, def, now)
+	if err != nil {
+		t.Fatalf("nextRunForGenerator fallback returned error: %v", err)
+	}
+	if want := now.Add(2 * time.Hour); !next.Equal(want) {
+		t.Fatalf("next run = %s, want %s", next, want)
+	}
+}
+
+func TestNextDueGeneratorAndPublishHelpers(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 3, 8, 12, 0, 0, 0, time.UTC)
+	handler := Handler{
+		GeneratorRegistry: fakeGeneratorRegistry{
+			items: []ports.RegisteredGenerator{
+				{Config: ports.GeneratorConfig{ID: "disabled", SchedulerEnabled: false}},
+				{
+					Config: ports.GeneratorConfig{
+						ID:               "future",
+						SchedulerEnabled: true,
+						Scheduler:        scheduling.Config{Mode: scheduling.ModeFixedInterval, FixedInterval: time.Hour, Timezone: "UTC"},
+					},
+				},
+				{
+					Config: ports.GeneratorConfig{
+						ID:               "due",
+						SchedulerEnabled: true,
+						Scheduler:        scheduling.Config{Mode: scheduling.ModeFixedInterval, FixedInterval: time.Hour, Timezone: "UTC"},
+					},
+				},
+			},
+		},
+		SchedulerStateRepo: &fakeSchedulerStateRepo{
+			states: map[string]scheduling.State{
+				"future": {NextRunAt: now.Add(time.Hour)},
+				"due":    {NextRunAt: now.Add(-time.Minute)},
+			},
+		},
+		PublisherRegistry: fakePublisherRegistry{},
+		Clock:             fakeClock{now: now},
+	}
+
+	def, err := handler.nextDueGenerator(context.Background())
+	if err != nil {
+		t.Fatalf("nextDueGenerator returned error: %v", err)
+	}
+	if def.Config.ID != "due" {
+		t.Fatalf("nextDueGenerator selected %q, want due", def.Config.ID)
+	}
+
+	noGenerators := Handler{
+		GeneratorRegistry:  fakeGeneratorRegistry{},
+		SchedulerStateRepo: &fakeSchedulerStateRepo{},
+		Clock:              fakeClock{now: now},
+	}
+	if _, err := noGenerators.nextDueGenerator(context.Background()); !errors.Is(err, episode.ErrNoGeneratorsAvailable) {
+		t.Fatalf("nextDueGenerator err = %v, want no generators available", err)
+	}
+
+	results, presentation := handler.publish(context.Background(), episode.Record{
+		Manifest: episode.Manifest{
+			EpisodeID:  "ep-1",
+			ArtistID:   "due",
+			ArtistType: "short_story",
+			OutputType: "short_story",
+			CreatedAt:  now,
+		},
+		OutputText: "Aria keeps the old oath alive in the ash city.",
+	}, episode.ArtistLens{}, []publication.ChannelName{publication.ChannelFilesystem})
+	if results["filesystem"].(map[string]any)["error"] != "channel not configured" {
+		t.Fatalf("unexpected publish result: %#v", results)
+	}
+	if presentation["filesystem"] == nil {
+		t.Fatalf("expected presentation snapshot for missing channel: %#v", presentation)
+	}
+}
+
+func TestTemplateUniverseDataAndSnapshotHelpers(t *testing.T) {
+	t.Parallel()
+
+	u := testUniverse()
+	u.Templates["a-template"] = domainuniverse.Entity{ID: "a-template", Type: "template", Body: "alpha", Data: map[string]any{"output_type": "short_story"}}
+	u.Templates["b-template"] = domainuniverse.Entity{ID: "b-template", Type: "template", Body: "beta", Data: map[string]any{"output_type": "short_story"}}
+
+	if got := resolveTemplateForType(u, "short_story", "missing"); got != "a-template" {
+		t.Fatalf("resolveTemplateForType sorted fallback = %q, want a-template", got)
+	}
+	if got := resolveTemplateForType(u, "video", "missing"); got != "" {
+		t.Fatalf("resolveTemplateForType non-match = %q, want empty", got)
+	}
+	if templateMatchesType(domainuniverse.Entity{Data: map[string]any{"output_type": "image"}}, "video") {
+		t.Fatal("expected templateMatchesType to reject mismatched type")
+	}
+
+	brief := enrichBriefWithUniverseData(episode.Brief{
+		TemplateID:   "short-story-template",
+		WorldID:      "ember-city",
+		EventID:      "gate-whisper",
+		CharacterIDs: []string{"aria"},
+	}, u)
+	if brief.TemplateBody == "" || brief.EventData == nil || brief.CharacterData["aria"] == nil {
+		t.Fatalf("unexpected enriched brief: %#v", brief)
+	}
+
+	snapshot := artistSnapshot(u.Artists["ash-chorister"])
+	if snapshot["id"] != "ash-chorister" || snapshot["non_diegietic"] != true {
+		t.Fatalf("unexpected artist snapshot: %#v", snapshot)
+	}
+	promptSnapshot := artistPromptSnapshot(buildArtistLens(u.Artists["ash-chorister"], ports.GeneratorConfig{}))
+	if promptSnapshot["id"] != "ash-chorister" || promptSnapshot["presentation"] == nil {
+		t.Fatalf("unexpected prompt snapshot: %#v", promptSnapshot)
+	}
+	if cloneAnyMap(nil) != nil {
+		t.Fatal("expected cloneAnyMap(nil) to return nil")
+	}
+	if !secretKey("Authorization") || secretKey("content") {
+		t.Fatal("unexpected secretKey classification")
+	}
+}
+
+func TestHandleWrapsUniverseLoadError(t *testing.T) {
+	t.Parallel()
+
+	handler := Handler{
+		UniverseRepo:       fakeUniverseRepo{err: errors.New("bad universe")},
+		EpisodeRepo:        &fakeEpisodeRepo{},
+		SchedulerStateRepo: &fakeSchedulerStateRepo{},
+		GeneratorRegistry:  fakeGeneratorRegistry{},
+		PublisherRegistry:  fakePublisherRegistry{},
+		Clock:              fakeClock{now: time.Now().UTC()},
+		IDGenerator:        fakeIDGen{id: "ep-err"},
+		Hasher:             fakeHasher{value: "hash"},
+		Planner:            planner.New(planner.Config{Weights: map[string]int{"short_story": 100}, Seed: 9, RecencyWindow: 5}),
+	}
+
+	if _, err := handler.Handle(context.Background(), Request{Generator: "missing"}); !errors.Is(err, episode.ErrUniverseInvalid) {
+		t.Fatalf("Handle err = %v, want universe invalid", err)
+	}
+}
+
 type fakeUniverseRepo struct {
 	universe domainuniverse.Universe
+	err      error
 }
 
 func (f fakeUniverseRepo) Load(_ context.Context) (domainuniverse.Universe, error) {
+	if f.err != nil {
+		return domainuniverse.Universe{}, f.err
+	}
 	return f.universe, nil
 }
 
@@ -150,10 +693,17 @@ func (f *fakeEpisodeRepo) RecentReferencesByGenerator(_ context.Context, _ strin
 type fakeSchedulerStateRepo struct {
 	savedGeneratorID string
 	state            scheduling.State
+	states           map[string]scheduling.State
 }
 
-func (f *fakeSchedulerStateRepo) Load(_ context.Context, _ string) (scheduling.State, error) {
-	return scheduling.State{}, nil
+func (f *fakeSchedulerStateRepo) Load(_ context.Context, generatorID string) (scheduling.State, error) {
+	if f.states != nil {
+		if state, ok := f.states[generatorID]; ok {
+			return state, nil
+		}
+		return scheduling.State{}, nil
+	}
+	return f.state, nil
 }
 
 func (f *fakeSchedulerStateRepo) Save(_ context.Context, generatorID string, state scheduling.State) error {
@@ -236,10 +786,15 @@ func (s *sequenceGenerator) Generate(context.Context, episode.Brief, episode.Sta
 }
 
 type fakePublisherRegistry struct {
-	publisher ports.Publisher
+	publisher  ports.Publisher
+	publishers map[publication.ChannelName]ports.Publisher
 }
 
 func (f fakePublisherRegistry) Get(name publication.ChannelName) (ports.Publisher, bool) {
+	if f.publishers != nil {
+		publisher, ok := f.publishers[name]
+		return publisher, ok
+	}
 	if f.publisher == nil {
 		return nil, false
 	}
@@ -255,6 +810,37 @@ func (fakePublisher) Name() publication.ChannelName { return publication.Channel
 
 func (fakePublisher) Publish(context.Context, publication.Item) (publication.Result, error) {
 	return publication.Result{Channel: "filesystem", Success: true, ExternalID: "/tmp/out.txt"}, nil
+}
+
+type fakeStaticPublisher struct {
+	name   publication.ChannelName
+	result publication.Result
+	err    error
+}
+
+func (f fakeStaticPublisher) Name() publication.ChannelName { return f.name }
+
+func (f fakeStaticPublisher) Publish(context.Context, publication.Item) (publication.Result, error) {
+	return f.result, f.err
+}
+
+type fakeAssetGenerator struct {
+	id         string
+	outputType episode.OutputType
+	assetPath  string
+}
+
+func (f fakeAssetGenerator) ID() string { return f.id }
+
+func (f fakeAssetGenerator) Type() episode.OutputType { return f.outputType }
+
+func (f fakeAssetGenerator) Generate(context.Context, episode.Brief, episode.State) (episode.Output, error) {
+	return episode.Output{
+		AssetPath: f.assetPath,
+		Prompt:    "prompt",
+		Provider:  "mock-image",
+		Model:     "mock-image-v1",
+	}, nil
 }
 
 type fakeClock struct {
@@ -336,4 +922,8 @@ func testUniverse() domainuniverse.Universe {
 		},
 		Rules: map[string]domainuniverse.Entity{},
 	}
+}
+
+func validStory() string {
+	return "Aria walks through the ash garden and hears Kade whisper from the gate while the city keeps their old oath alive."
 }
