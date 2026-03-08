@@ -10,6 +10,23 @@ type Universe struct {
 	Templates  map[string]Entity
 }
 
+type Asset struct {
+	ID          string
+	FileName    string
+	Path        string
+	MediaType   string
+	Usage       string
+	Description string
+	Tags        []string
+	Weight      int
+	Optional    bool
+	ModelRoles  map[string]string
+}
+
+type AssetSet struct {
+	Items []Asset
+}
+
 type Entity struct {
 	ID          string
 	Type        string
@@ -18,4 +35,5 @@ type Entity struct {
 	Body        string
 	Data        map[string]any
 	Path        string
+	Assets      AssetSet
 }

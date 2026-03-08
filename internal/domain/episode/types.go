@@ -18,18 +18,43 @@ const (
 )
 
 type Brief struct {
-	EpisodeType   OutputType                `json:"episode_type"`
-	WorldID       string                    `json:"world_id"`
-	CharacterIDs  []string                  `json:"character_ids"`
-	EventID       string                    `json:"event_id"`
-	TemplateID    string                    `json:"template_id"`
-	TemplateBody  string                    `json:"template_body,omitempty"`
-	Tone          string                    `json:"tone"`
-	Objective     string                    `json:"objective"`
-	CanonRules    []string                  `json:"canon_rules"`
-	CharacterData map[string]map[string]any `json:"character_data,omitempty"`
-	WorldData     map[string]any            `json:"world_data,omitempty"`
-	EventData     map[string]any            `json:"event_data,omitempty"`
+	EpisodeType          OutputType                `json:"episode_type"`
+	WorldID              string                    `json:"world_id"`
+	CharacterIDs         []string                  `json:"character_ids"`
+	EventID              string                    `json:"event_id"`
+	TemplateID           string                    `json:"template_id"`
+	TemplateBody         string                    `json:"template_body,omitempty"`
+	Tone                 string                    `json:"tone"`
+	Objective            string                    `json:"objective"`
+	CanonRules           []string                  `json:"canon_rules"`
+	CharacterData        map[string]map[string]any `json:"character_data,omitempty"`
+	WorldData            map[string]any            `json:"world_data,omitempty"`
+	EventData            map[string]any            `json:"event_data,omitempty"`
+	VisualReferences     []VisualReference         `json:"visual_references,omitempty"`
+	ContinuityReferences []ContinuityReference     `json:"continuity_references,omitempty"`
+}
+
+type VisualReference struct {
+	Source      string `json:"source"`
+	EntityType  string `json:"entity_type"`
+	EntityID    string `json:"entity_id"`
+	AssetID     string `json:"asset_id"`
+	Path        string `json:"path"`
+	MediaType   string `json:"media_type"`
+	Usage       string `json:"usage"`
+	Description string `json:"description"`
+	Weight      int    `json:"weight"`
+	ModelRole   string `json:"model_role"`
+}
+
+type ContinuityReference struct {
+	EpisodeID       string    `json:"episode_id"`
+	GeneratorID     string    `json:"generator_id"`
+	CreatedAt       time.Time `json:"created_at"`
+	Prompt          string    `json:"prompt,omitempty"`
+	OutputText      string    `json:"output_text,omitempty"`
+	OutputAssetPath string    `json:"output_asset_path,omitempty"`
+	Summary         string    `json:"summary,omitempty"`
 }
 
 type State struct {

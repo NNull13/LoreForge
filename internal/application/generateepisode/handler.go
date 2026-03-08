@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"loreforge/internal/application/ports"
+	"loreforge/internal/application/referenceselector"
 	"loreforge/internal/domain/episode"
 	"loreforge/internal/domain/publication"
 	"loreforge/internal/domain/scheduling"
@@ -62,6 +63,16 @@ func (h Handler) Handle(ctx context.Context, req Request) (Result, error) {
 	brief.EpisodeType = def.Config.Type
 	brief.TemplateID = pickTemplateForType(u, string(def.Config.Type), brief.TemplateID)
 	brief = enrichBriefWithUniverseData(brief, u)
+	continuityRefs, err := h.EpisodeRepo.RecentReferencesByGenerator(ctx, def.Config.ID, def.Config.MaxContinuityItems)
+	if err != nil {
+		return Result{}, err
+	}
+	selected := referenceselector.Select(brief, u, def.Config, continuityRefs)
+	brief.VisualReferences = selected.VisualReferences
+	brief.ContinuityReferences = selected.ContinuityReferences
+	if !def.Config.IncludeTextMemories {
+		brief.ContinuityReferences = nil
+	}
 	universeVersion, err := h.Hasher.Hash(ctx)
 	if err != nil {
 		return Result{}, err
@@ -124,16 +135,19 @@ func (h Handler) Handle(ctx context.Context, req Request) (Result, error) {
 			State: string(episode.StatusGenerated),
 		},
 		Context: map[string]any{
-			"brief":             brief,
-			"universe":          u.Universe.ID,
-			"generator_id":      def.Config.ID,
-			"artist_id":         def.Config.ID,
-			"collab_recent":     recent,
-			"generator_recent":  recentByGenerator,
-			"artist_recent":     recentByGenerator,
-			"generator_targets": def.Config.PublishTargets,
-			"artist_targets":    def.Config.PublishTargets,
-			"provider_driver":   def.Config.ProviderDriver,
+			"brief":                          brief,
+			"universe":                       u.Universe.ID,
+			"generator_id":                   def.Config.ID,
+			"artist_id":                      def.Config.ID,
+			"collab_recent":                  recent,
+			"generator_recent":               recentByGenerator,
+			"artist_recent":                  recentByGenerator,
+			"generator_targets":              def.Config.PublishTargets,
+			"artist_targets":                 def.Config.PublishTargets,
+			"provider_driver":                def.Config.ProviderDriver,
+			"reference_mode":                 def.Config.ReferenceMode,
+			"selected_visual_references":     brief.VisualReferences,
+			"selected_continuity_references": brief.ContinuityReferences,
 		},
 		Prompt:           out.Prompt,
 		ProviderRequest:  sanitizeSecrets(out.ProviderRequest),
@@ -172,6 +186,17 @@ func (h Handler) Handle(ctx context.Context, req Request) (Result, error) {
 }
 
 func (h Handler) bootstrapRunwayImage(ctx context.Context, req Request, brief episode.Brief, state episode.State, def ports.RegisteredGenerator) (episode.Output, error) {
+	for _, ref := range brief.VisualReferences {
+		if ref.MediaType == "image" && ref.ModelRole == "prompt_image" && strings.TrimSpace(ref.Path) != "" {
+			state.Metadata["bootstrap_generator_id"] = "universe_asset"
+			return episode.Output{
+				AssetPath: ref.Path,
+				Provider:  "universe_asset",
+				Model:     "reference",
+				Prompt:    brief.Objective,
+			}, nil
+		}
+	}
 	bootstrapID, _ := def.Config.Options["bootstrap_image_generator"].(string)
 	if strings.TrimSpace(bootstrapID) == "" {
 		if providerDriver, ok := def.Config.Options["bootstrap_image_provider"].(string); ok && strings.TrimSpace(providerDriver) != "" {
@@ -282,9 +307,7 @@ func (h Handler) publish(ctx context.Context, record episode.Record, targets []p
 		res, err := publisher.Publish(ctx, publication.Item{
 			EpisodeID:     record.Manifest.EpisodeID,
 			GeneratorID:   record.Manifest.ArtistID,
-			ArtistID:      record.Manifest.ArtistID,
 			GeneratorType: record.Manifest.ArtistType,
-			ArtistType:    record.Manifest.ArtistType,
 			OutputType:    record.Manifest.OutputType,
 			Content:       record.OutputText,
 			AssetPath:     record.OutputAssetPath,

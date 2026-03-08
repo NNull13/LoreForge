@@ -6,14 +6,32 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
-	"gopkg.in/yaml.v3"
 	domainuniverse "loreforge/internal/domain/universe"
+
+	"gopkg.in/yaml.v3"
 )
 
 type Repository struct {
 	Root string
+}
+
+type assetMetadataFile struct {
+	Assets []assetMetadata `yaml:"assets"`
+}
+
+type assetMetadata struct {
+	FileName    string            `yaml:"file"`
+	ID          string            `yaml:"id"`
+	MediaType   string            `yaml:"media_type"`
+	Usage       string            `yaml:"usage"`
+	Description string            `yaml:"description"`
+	Tags        []string          `yaml:"tags"`
+	Weight      int               `yaml:"weight"`
+	Optional    *bool             `yaml:"optional"`
+	ModelRoles  map[string]string `yaml:"model_roles"`
 }
 
 func (r Repository) Load(_ context.Context) (domainuniverse.Universe, error) {
@@ -28,49 +46,93 @@ func (r Repository) Load(_ context.Context) (domainuniverse.Universe, error) {
 	if _, err := os.Stat(r.Root); err != nil {
 		return u, fmt.Errorf("universe path: %w", err)
 	}
-	entity, err := loadEntity(filepath.Join(r.Root, "universe.md"))
+
+	rootEntityDir := filepath.Join(r.Root, "universe")
+	entity, err := loadEntityDirectory(rootEntityDir, "universe", "")
 	if err != nil {
-		return u, fmt.Errorf("load universe.md: %w", err)
+		return u, err
 	}
 	u.Universe = entity
-	if err := loadDirEntities(filepath.Join(r.Root, "rules"), "rule", u.Rules); err != nil {
+
+	if err := loadEntityDirectories(filepath.Join(r.Root, "rules"), "rule", u.Rules); err != nil {
 		return u, err
 	}
-	if err := loadDirEntities(filepath.Join(r.Root, "worlds"), "world", u.Worlds); err != nil {
+	if err := loadEntityDirectories(filepath.Join(r.Root, "worlds"), "world", u.Worlds); err != nil {
 		return u, err
 	}
-	if err := loadDirEntities(filepath.Join(r.Root, "characters"), "character", u.Characters); err != nil {
+	if err := loadEntityDirectories(filepath.Join(r.Root, "characters"), "character", u.Characters); err != nil {
 		return u, err
 	}
-	if err := loadDirEntities(filepath.Join(r.Root, "events"), "event", u.Events); err != nil {
+	if err := loadEntityDirectories(filepath.Join(r.Root, "events"), "event", u.Events); err != nil {
 		return u, err
 	}
-	if err := loadDirEntities(filepath.Join(r.Root, "templates"), "template", u.Templates); err != nil {
+	if err := loadEntityDirectories(filepath.Join(r.Root, "templates"), "template", u.Templates); err != nil {
 		return u, err
 	}
+
 	if err := domainuniverse.Validate(u); err != nil {
 		return u, err
 	}
 	return u, nil
 }
 
-func loadDirEntities(dir, expectedType string, dst map[string]domainuniverse.Entity) error {
+func loadEntityDirectories(dir, expectedType string, dst map[string]domainuniverse.Entity) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", dir, err)
 	}
 	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
-			continue
+		if !entry.IsDir() {
+			return fmt.Errorf("%s only supports entity directories, found file %s", dir, entry.Name())
 		}
-		entity, err := loadEntity(filepath.Join(dir, entry.Name()))
+		entity, err := loadEntityDirectory(filepath.Join(dir, entry.Name()), expectedType, entry.Name())
 		if err != nil {
 			return err
 		}
-		if expectedType != "" && entity.Type != expectedType {
-			return fmt.Errorf("%s expects type=%s, got %s (%s)", dir, expectedType, entity.Type, entry.Name())
-		}
 		dst[entity.ID] = entity
+	}
+	return nil
+}
+
+func loadEntityDirectory(dir, expectedType, expectedID string) (domainuniverse.Entity, error) {
+	fileBase := expectedID
+	if fileBase == "" {
+		fileBase = filepath.Base(dir)
+	}
+	mdPath := filepath.Join(dir, fileBase+".md")
+	entity, err := loadEntity(mdPath)
+	if err != nil {
+		return domainuniverse.Entity{}, err
+	}
+	if expectedID != "" && entity.ID != expectedID {
+		return domainuniverse.Entity{}, fmt.Errorf("%s id mismatch: folder=%s id=%s", dir, expectedID, entity.ID)
+	}
+	if expectedType != "" && entity.Type != expectedType {
+		return domainuniverse.Entity{}, fmt.Errorf("%s expects type=%s, got %s", dir, expectedType, entity.Type)
+	}
+	if err := ensureOnlyExpectedMarkdown(dir, fileBase+".md"); err != nil {
+		return domainuniverse.Entity{}, err
+	}
+	assets, err := loadAssets(dir, entity.Type)
+	if err != nil {
+		return domainuniverse.Entity{}, err
+	}
+	entity.Assets = assets
+	return entity, nil
+}
+
+func ensureOnlyExpectedMarkdown(dir, expected string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		if strings.HasSuffix(strings.ToLower(entry.Name()), ".md") && entry.Name() != expected {
+			return fmt.Errorf("%s contains unexpected markdown file %s", dir, entry.Name())
+		}
 	}
 	return nil
 }
@@ -78,7 +140,7 @@ func loadDirEntities(dir, expectedType string, dst map[string]domainuniverse.Ent
 func loadEntity(path string) (domainuniverse.Entity, error) {
 	content, err := os.ReadFile(path)
 	if err != nil {
-		return domainuniverse.Entity{}, err
+		return domainuniverse.Entity{}, fmt.Errorf("load %s: %w", path, err)
 	}
 	fm, body, err := splitFrontmatter(string(content))
 	if err != nil {
@@ -94,7 +156,7 @@ func loadEntity(path string) (domainuniverse.Entity, error) {
 		id = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 	}
 	entityType := asString(data["type"])
-	if entityType == "" && strings.HasSuffix(path, "universe.md") {
+	if entityType == "" && filepath.Base(path) == "universe.md" {
 		entityType = "universe"
 	}
 	return domainuniverse.Entity{
@@ -106,6 +168,135 @@ func loadEntity(path string) (domainuniverse.Entity, error) {
 		Data:        data,
 		Path:        path,
 	}, nil
+}
+
+func loadAssets(dir, entityType string) (domainuniverse.AssetSet, error) {
+	declared, err := loadAssetsMetadata(dir)
+	if err != nil {
+		return domainuniverse.AssetSet{}, err
+	}
+	discovered, err := discoverAssets(dir, entityType)
+	if err != nil {
+		return domainuniverse.AssetSet{}, err
+	}
+	items, err := mergeAssets(declared, discovered)
+	if err != nil {
+		return domainuniverse.AssetSet{}, err
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].Weight != items[j].Weight {
+			return items[i].Weight > items[j].Weight
+		}
+		return items[i].ID < items[j].ID
+	})
+	return domainuniverse.AssetSet{Items: items}, nil
+}
+
+func loadAssetsMetadata(dir string) ([]domainuniverse.Asset, error) {
+	path := filepath.Join(dir, "assets.yaml")
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var file assetMetadataFile
+	if err := yaml.Unmarshal(content, &file); err != nil {
+		return nil, fmt.Errorf("%s: invalid yaml: %w", path, err)
+	}
+	out := make([]domainuniverse.Asset, 0, len(file.Assets))
+	for _, item := range file.Assets {
+		assetPath := filepath.Join(dir, item.FileName)
+		if _, err := os.Stat(assetPath); err != nil {
+			return nil, fmt.Errorf("%s references missing asset %s", path, item.FileName)
+		}
+		out = append(out, domainuniverse.Asset{
+			ID:          coalesce(item.ID, strings.TrimSuffix(item.FileName, filepath.Ext(item.FileName))),
+			FileName:    item.FileName,
+			Path:        assetPath,
+			MediaType:   coalesce(item.MediaType, mediaTypeFromExt(item.FileName)),
+			Usage:       item.Usage,
+			Description: item.Description,
+			Tags:        append([]string(nil), item.Tags...),
+			Weight:      item.Weight,
+			Optional:    item.Optional == nil || *item.Optional,
+			ModelRoles:  cloneStringMap(item.ModelRoles),
+		})
+	}
+	return out, nil
+}
+
+func discoverAssets(dir, entityType string) ([]domainuniverse.Asset, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]domainuniverse.Asset, 0)
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if strings.EqualFold(name, "assets.yaml") || strings.HasSuffix(strings.ToLower(name), ".md") {
+			continue
+		}
+		mediaType := mediaTypeFromExt(name)
+		if mediaType == "" {
+			continue
+		}
+		out = append(out, domainuniverse.Asset{
+			ID:          strings.TrimSuffix(name, filepath.Ext(name)),
+			FileName:    name,
+			Path:        filepath.Join(dir, name),
+			MediaType:   mediaType,
+			Usage:       defaultUsage(entityType),
+			Description: "",
+			Weight:      50,
+			Optional:    true,
+		})
+	}
+	return out, nil
+}
+
+func mergeAssets(declared []domainuniverse.Asset, discovered []domainuniverse.Asset) ([]domainuniverse.Asset, error) {
+	byFile := map[string]domainuniverse.Asset{}
+	for _, item := range discovered {
+		byFile[item.FileName] = item
+	}
+	for _, item := range declared {
+		byFile[item.FileName] = item
+	}
+	out := make([]domainuniverse.Asset, 0, len(byFile))
+	for _, item := range byFile {
+		out = append(out, item)
+	}
+	return out, nil
+}
+
+func defaultUsage(entityType string) string {
+	switch entityType {
+	case "character":
+		return "character_reference"
+	case "world":
+		return "environment_reference"
+	default:
+		return "continuity_reference"
+	}
+}
+
+func mediaTypeFromExt(name string) string {
+	switch strings.ToLower(filepath.Ext(name)) {
+	case ".png", ".jpg", ".jpeg", ".webp":
+		return "image"
+	case ".mp4", ".mov", ".webm":
+		return "video"
+	default:
+		return ""
+	}
 }
 
 func splitFrontmatter(content string) (fm string, body string, err error) {
@@ -147,6 +338,17 @@ func normalizeYAMLValue(value any) any {
 	default:
 		return value
 	}
+}
+
+func cloneStringMap(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+	return out
 }
 
 func asString(value any) string {

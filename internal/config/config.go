@@ -314,6 +314,29 @@ func (c *Config) applyArtistDefaults(a *ArtistConfig) {
 			a.Provider.Driver = c.Providers.Image.Driver
 		}
 	}
+	if a.Options == nil {
+		a.Options = map[string]any{}
+	}
+	if _, ok := a.Options["reference_mode"]; !ok {
+		switch a.Type {
+		case "text":
+			a.Options["reference_mode"] = "continuity_only"
+		case "image", "video":
+			a.Options["reference_mode"] = "continuity_plus_assets"
+		}
+	}
+	if _, ok := a.Options["continuity_scope"]; !ok {
+		a.Options["continuity_scope"] = "same_artist"
+	}
+	if _, ok := a.Options["max_continuity_items"]; !ok {
+		a.Options["max_continuity_items"] = 3
+	}
+	if _, ok := a.Options["max_asset_references"]; !ok {
+		a.Options["max_asset_references"] = 4
+	}
+	if _, ok := a.Options["include_text_memories"]; !ok {
+		a.Options["include_text_memories"] = true
+	}
 }
 
 func boolPtr(v bool) *bool { return &v }
@@ -339,6 +362,9 @@ func (c *Config) validateArtists() error {
 		if a.Provider.Driver == "" {
 			return fmt.Errorf("artist %s provider.driver is required", a.ID)
 		}
+		if err := validateArtistOptions(*a); err != nil {
+			return err
+		}
 		if err := validateProviderDriver(*a); err != nil {
 			return err
 		}
@@ -348,6 +374,67 @@ func (c *Config) validateArtists() error {
 	}
 	sort.Slice(c.Artists, func(i, j int) bool { return c.Artists[i].ID < c.Artists[j].ID })
 	return nil
+}
+
+func validateArtistOptions(a ArtistConfig) error {
+	mode, _ := a.Options["reference_mode"].(string)
+	switch mode {
+	case "creative", "continuity_only", "continuity_plus_assets", "assets_only":
+	default:
+		return fmt.Errorf("artist %s options.reference_mode invalid: %s", a.ID, mode)
+	}
+	scope, _ := a.Options["continuity_scope"].(string)
+	if scope != "same_artist" {
+		return fmt.Errorf("artist %s options.continuity_scope invalid: %s", a.ID, scope)
+	}
+	if v, ok := intFromAny(a.Options["max_continuity_items"]); !ok || v < 0 {
+		return fmt.Errorf("artist %s options.max_continuity_items must be >= 0", a.ID)
+	}
+	if v, ok := intFromAny(a.Options["max_asset_references"]); !ok || v < 0 {
+		return fmt.Errorf("artist %s options.max_asset_references must be >= 0", a.ID)
+	}
+	if list, ok := stringSliceFromAny(a.Options["asset_usage_allowlist"]); ok {
+		for _, item := range list {
+			switch item {
+			case "character_reference", "style_reference", "environment_reference", "prop_reference", "pose_reference", "continuity_reference", "video_prompt_image":
+			default:
+				return fmt.Errorf("artist %s options.asset_usage_allowlist contains invalid usage %s", a.ID, item)
+			}
+		}
+	}
+	return nil
+}
+
+func intFromAny(v any) (int, bool) {
+	switch t := v.(type) {
+	case int:
+		return t, true
+	case int64:
+		return int(t), true
+	case float64:
+		return int(t), true
+	default:
+		return 0, false
+	}
+}
+
+func stringSliceFromAny(v any) ([]string, bool) {
+	switch t := v.(type) {
+	case []string:
+		return t, true
+	case []any:
+		out := make([]string, 0, len(t))
+		for _, item := range t {
+			s, ok := item.(string)
+			if !ok {
+				return nil, false
+			}
+			out = append(out, s)
+		}
+		return out, true
+	default:
+		return nil, false
+	}
 }
 
 func (c *Config) applyProviderDefaults() {

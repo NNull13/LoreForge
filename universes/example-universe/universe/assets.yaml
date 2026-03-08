@@ -1,0 +1,9 @@
+assets:
+  - file: skyline.png
+    id: skyline
+    media_type: image
+    usage: environment_reference
+    description: Shattered skyline of the universe core city at dusk.
+    tags: [moodboard, skyline]
+    weight: 70
+    optional: true

@@ -119,7 +119,8 @@ func (f fakeUniverseRepo) Load(_ context.Context) (domainuniverse.Universe, erro
 }
 
 type fakeEpisodeRepo struct {
-	saved episode.Record
+	saved      episode.Record
+	references []episode.ContinuityReference
 }
 
 func (f *fakeEpisodeRepo) Save(_ context.Context, record episode.Record) (episode.StoredRecord, error) {
@@ -137,6 +138,10 @@ func (f *fakeEpisodeRepo) RecentCombos(_ context.Context, _ int) ([]episode.Comb
 
 func (f *fakeEpisodeRepo) RecentCombosByGenerator(_ context.Context, _ string, _ int) ([]episode.Combo, error) {
 	return nil, nil
+}
+
+func (f *fakeEpisodeRepo) RecentReferencesByGenerator(_ context.Context, _ string, _ int) ([]episode.ContinuityReference, error) {
+	return f.references, nil
 }
 
 type fakeSchedulerStateRepo struct {

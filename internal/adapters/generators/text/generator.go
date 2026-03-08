@@ -56,11 +56,18 @@ func buildPrompt(brief episode.Brief) string {
 		brief.EventData,
 		brief.CharacterData,
 	)
+	if refs := formatContinuityReferences(brief.ContinuityReferences); refs != "" {
+		contextBlock += "\n\nContinuity Memories:\n" + refs
+	}
+	if refs := formatVisualReferences(brief.VisualReferences); refs != "" {
+		contextBlock += "\n\nVisual Canon References:\n" + refs
+	}
 	if strings.TrimSpace(brief.TemplateBody) != "" {
 		return fmt.Sprintf("%s\n\n%s", brief.TemplateBody, contextBlock)
 	}
+	additions := promptAdditions(brief)
 	return fmt.Sprintf(
-		"Create a short narrative. Type: %s. World: %s. Characters: %s. Event: %s. Tone: %s. Objective: %s. Rules: %s",
+		"Create a short narrative. Type: %s. World: %s. Characters: %s. Event: %s. Tone: %s. Objective: %s. Rules: %s%s",
 		brief.EpisodeType,
 		brief.WorldID,
 		strings.Join(brief.CharacterIDs, ", "),
@@ -68,5 +75,54 @@ func buildPrompt(brief episode.Brief) string {
 		brief.Tone,
 		brief.Objective,
 		strings.Join(brief.CanonRules, " | "),
+		additions,
 	)
+}
+
+func promptAdditions(brief episode.Brief) string {
+	sections := make([]string, 0, 2)
+	if refs := formatContinuityReferences(brief.ContinuityReferences); refs != "" {
+		sections = append(sections, "Continuity Memories:\n"+refs)
+	}
+	if refs := formatVisualReferences(brief.VisualReferences); refs != "" {
+		sections = append(sections, "Visual Canon References:\n"+refs)
+	}
+	if len(sections) == 0 {
+		return ""
+	}
+	return "\n\n" + strings.Join(sections, "\n\n")
+}
+
+func formatContinuityReferences(refs []episode.ContinuityReference) string {
+	lines := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		summary := strings.TrimSpace(ref.Summary)
+		if summary == "" {
+			summary = strings.TrimSpace(ref.OutputText)
+		}
+		if summary == "" {
+			summary = strings.TrimSpace(ref.Prompt)
+		}
+		if summary == "" {
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("- Episode %s: %s", ref.EpisodeID, summary))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func formatVisualReferences(refs []episode.VisualReference) string {
+	lines := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		label := ref.AssetID
+		if label == "" {
+			label = ref.Path
+		}
+		if strings.TrimSpace(ref.Description) != "" {
+			lines = append(lines, fmt.Sprintf("- %s (%s): %s", label, ref.Usage, ref.Description))
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("- %s (%s)", label, ref.Usage))
+	}
+	return strings.Join(lines, "\n")
 }

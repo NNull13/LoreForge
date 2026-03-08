@@ -1,0 +1,20 @@
+assets:
+  - file: red-wanderer-base.png
+    id: red-wanderer-base
+    media_type: image
+    usage: character_reference
+    description: Primary look reference with the red scarf and dust coat.
+    tags: [portrait, default]
+    weight: 100
+    optional: false
+    model_roles:
+      runway_gen4: prompt_image
+      vertex_veo: asset
+  - file: red-wanderer-run.png
+    id: red-wanderer-run
+    media_type: image
+    usage: pose_reference
+    description: Full-body running pose reference for action shots.
+    tags: [motion, action]
+    weight: 85
+    optional: true

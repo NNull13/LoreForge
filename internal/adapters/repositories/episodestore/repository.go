@@ -84,6 +84,58 @@ func (r *Repository) RecentCombos(_ context.Context, limit int) ([]episode.Combo
 	return scanCombos(rows, limit)
 }
 
+func (r *Repository) RecentReferencesByGenerator(_ context.Context, generatorID string, limit int) ([]episode.ContinuityReference, error) {
+	if limit <= 0 || strings.TrimSpace(generatorID) == "" {
+		return nil, nil
+	}
+	if err := r.ensureDB(); err != nil {
+		return nil, err
+	}
+	rows, err := r.db.Query(`
+		SELECT id, path, created_at
+		FROM episodes
+		WHERE generator_id = ?
+		ORDER BY created_at DESC
+		LIMIT ?`, generatorID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]episode.ContinuityReference, 0, limit)
+	for rows.Next() {
+		var id, path, createdAt string
+		if err := rows.Scan(&id, &path, &createdAt); err != nil {
+			return nil, err
+		}
+		ts, err := time.Parse(time.RFC3339Nano, createdAt)
+		if err != nil {
+			ts, _ = time.Parse(time.RFC3339, createdAt)
+		}
+		ref := episode.ContinuityReference{
+			EpisodeID:   id,
+			GeneratorID: generatorID,
+			CreatedAt:   ts,
+		}
+		if prompt, err := os.ReadFile(filepath.Join(path, "prompt.txt")); err == nil {
+			ref.Prompt = string(prompt)
+		}
+		if outputText, err := os.ReadFile(filepath.Join(path, "output.txt")); err == nil {
+			ref.OutputText = string(outputText)
+			ref.Summary = summarizeText(ref.OutputText)
+		}
+		if ref.OutputAssetPath == "" {
+			if assetPath := findOutputAsset(path); assetPath != "" {
+				ref.OutputAssetPath = assetPath
+				if ref.Summary == "" {
+					ref.Summary = "Visual output from previous episode " + id
+				}
+			}
+		}
+		out = append(out, ref)
+	}
+	return out, rows.Err()
+}
+
 func (r *Repository) RecentCombosByGenerator(_ context.Context, generatorID string, limit int) ([]episode.Combo, error) {
 	if limit <= 0 || strings.TrimSpace(generatorID) == "" {
 		return nil, nil
@@ -296,6 +348,36 @@ func writeJSON(path string, value any) error {
 	}
 	content = append(content, '\n')
 	return os.WriteFile(path, content, 0o644)
+}
+
+func summarizeText(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) <= 280 {
+		return value
+	}
+	return value[:280]
+}
+
+func findOutputAsset(path string) string {
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return ""
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if strings.EqualFold(name, "output.txt") || strings.HasSuffix(name, ".json") || strings.EqualFold(name, "prompt.txt") || strings.EqualFold(name, "manifest.json") {
+			continue
+		}
+		ext := strings.ToLower(filepath.Ext(name))
+		switch ext {
+		case ".png", ".jpg", ".jpeg", ".webp", ".mp4", ".mov", ".webm":
+			return filepath.Join(path, name)
+		}
+	}
+	return ""
 }
 
 func firstOrEmpty(values []string) string {

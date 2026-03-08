@@ -46,14 +46,16 @@ func (g Generator) Generate(ctx context.Context, brief episode.Brief, _ episode.
 		Model:     resp.Model,
 		Prompt:    prompt,
 		ProviderRequest: map[string]any{
-			"prompt":        prompt,
-			"width":         req.Width,
-			"height":        req.Height,
-			"seed":          seed,
-			"aspect_ratio":  req.AspectRatio,
-			"count":         req.Count,
-			"output_format": req.OutputFormat,
-			"quality":       req.Quality,
+			"prompt":                prompt,
+			"width":                 req.Width,
+			"height":                req.Height,
+			"seed":                  seed,
+			"aspect_ratio":          req.AspectRatio,
+			"count":                 req.Count,
+			"output_format":         req.OutputFormat,
+			"quality":               req.Quality,
+			"visual_references":     brief.VisualReferences,
+			"continuity_references": brief.ContinuityReferences,
 		},
 		ProviderResponse: map[string]any{
 			"asset_path":     resp.AssetPath,
@@ -77,15 +79,68 @@ func buildPrompt(brief episode.Brief) string {
 		brief.EventData,
 		brief.CharacterData,
 	)
+	if refs := formatContinuityReferences(brief.ContinuityReferences); refs != "" {
+		contextBlock += "\n\nReference Memories:\n" + refs
+	}
+	if refs := formatVisualReferences(brief.VisualReferences); refs != "" {
+		contextBlock += "\n\nVisual References:\n" + refs
+	}
 	if strings.TrimSpace(brief.TemplateBody) != "" {
 		return fmt.Sprintf("%s\n\n%s", brief.TemplateBody, contextBlock)
 	}
+	additions := promptAdditions(brief)
 	return fmt.Sprintf(
-		"Create a still image concept. World: %s. Characters: %s. Event: %s. Tone: %s. Keep canon rules: %s",
+		"Create a still image concept. World: %s. Characters: %s. Event: %s. Tone: %s. Keep canon rules: %s%s",
 		brief.WorldID,
 		strings.Join(brief.CharacterIDs, ", "),
 		brief.EventID,
 		brief.Tone,
 		strings.Join(brief.CanonRules, " | "),
+		additions,
 	)
+}
+
+func promptAdditions(brief episode.Brief) string {
+	sections := make([]string, 0, 2)
+	if refs := formatContinuityReferences(brief.ContinuityReferences); refs != "" {
+		sections = append(sections, "Reference Memories:\n"+refs)
+	}
+	if refs := formatVisualReferences(brief.VisualReferences); refs != "" {
+		sections = append(sections, "Visual References:\n"+refs)
+	}
+	if len(sections) == 0 {
+		return ""
+	}
+	return "\n\n" + strings.Join(sections, "\n\n")
+}
+
+func formatContinuityReferences(refs []episode.ContinuityReference) string {
+	lines := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		summary := strings.TrimSpace(ref.Summary)
+		if summary == "" {
+			summary = strings.TrimSpace(ref.OutputText)
+		}
+		if summary == "" {
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("- Episode %s: %s", ref.EpisodeID, summary))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func formatVisualReferences(refs []episode.VisualReference) string {
+	lines := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		label := ref.AssetID
+		if label == "" {
+			label = ref.Path
+		}
+		if strings.TrimSpace(ref.Description) != "" {
+			lines = append(lines, fmt.Sprintf("- %s (%s): %s", label, ref.Usage, ref.Description))
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("- %s (%s)", label, ref.Usage))
+	}
+	return strings.Join(lines, "\n")
 }

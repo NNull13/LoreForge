@@ -12,9 +12,7 @@ const (
 type Item struct {
 	EpisodeID     string         `json:"episode_id"`
 	GeneratorID   string         `json:"generator_id,omitempty"`
-	ArtistID      string         `json:"artist_id,omitempty"`
 	GeneratorType string         `json:"generator_type,omitempty"`
-	ArtistType    string         `json:"artist_type,omitempty"`
 	OutputType    string         `json:"output_type"`
 	Content       string         `json:"content,omitempty"`
 	AssetPath     string         `json:"asset_path,omitempty"`

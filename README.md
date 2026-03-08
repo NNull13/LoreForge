@@ -2,6 +2,8 @@
 
 A Go engine to generate autonomous text and video episodes from a universe defined in Markdown + YAML frontmatter.
 
+LoreForge now expects the universe in the folder-per-entity format. The old flat `characters/foo.md` layout is no longer supported.
+
 ## Commands
 
 ```bash
@@ -30,6 +32,42 @@ The bundled example config is wired to `mock` providers, but LoreForge now suppo
 - `internal/adapters`: repositories, providers, publishers, and generators.
 - `internal/planner`: narrative brief with weights and anti-repetition.
 - `internal/platform`: infrastructure helpers such as IDs, hashing, and clocks.
+
+## Universe Format
+
+Each entity lives in its own directory:
+
+```text
+universes/example-universe/
+  universe/
+    universe.md
+    assets.yaml
+    skyline.png
+  characters/
+    red-wanderer/
+      red-wanderer.md
+      assets.yaml
+      red-wanderer-base.png
+      red-wanderer-run.png
+  worlds/
+    glass-kingdom/
+      glass-kingdom.md
+      assets.yaml
+      glass-kingdom-moodboard.png
+  events/
+    lost-artifact/
+      lost-artifact.md
+  templates/
+    short-story/
+      short-story.md
+  rules/
+    global-rules/
+      global-rules.md
+```
+
+`assets.yaml` is optional. If a directory contains visual files and no metadata file, LoreForge autodiscovers them with defaults.
+
+See [universe-assets.md](/docs/universe-assets.md) for the full asset schema and reference selection rules.
 
 ## Episode Persistence
 
@@ -102,5 +140,31 @@ artists:
 ```
 
 Runway is wired as `image_to_video`. If you choose `runway_gen4`, configure either `options.bootstrap_image_generator` or `options.bootstrap_image_provider` so LoreForge can generate a bootstrap image before creating the video.
+
+## Reference Modes
+
+Each artist can choose how to use universe assets and previous outputs from the same artist:
+
+```yaml
+artists:
+  - id: image-artist
+    type: image
+    options:
+      reference_mode: continuity_plus_assets
+      continuity_scope: same_artist
+      max_continuity_items: 3
+      max_asset_references: 4
+      include_text_memories: true
+      asset_usage_allowlist: [character_reference, environment_reference]
+```
+
+Supported `reference_mode` values:
+
+- `creative`
+- `continuity_only`
+- `continuity_plus_assets`
+- `assets_only`
+
+For `runway_gen4`, LoreForge first tries a selected universe asset with `model_roles.runway_gen4: prompt_image`. If no such asset exists, it falls back to `bootstrap_image_generator` or `bootstrap_image_provider`.
 
 See [openai-image.md](/docs/providers/openai-image.md), [vertex-imagen.md](/docs/providers/vertex-imagen.md), [vertex-veo.md](/docs/providers/vertex-veo.md), and [runway-gen4.md](/docs/providers/runway-gen4.md) for provider-specific notes.

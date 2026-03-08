@@ -1,0 +1,9 @@
+assets:
+  - file: glass-kingdom-moodboard.png
+    id: glass-kingdom-moodboard
+    media_type: image
+    usage: environment_reference
+    description: Reflective towers and cold blue light across the capital.
+    tags: [moodboard, architecture]
+    weight: 90
+    optional: true

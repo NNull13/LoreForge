@@ -49,7 +49,7 @@ func (p Publisher) Publish(ctx context.Context, item publication.Item) (publicat
 	}
 	text := strings.TrimSpace(item.Content)
 	if text == "" {
-		text = fmt.Sprintf("New %s piece by %s (%s).", item.OutputType, item.ArtistID, item.EpisodeID)
+		text = fmt.Sprintf("New %s piece by %s (%s).", item.OutputType, item.GeneratorID, item.EpisodeID)
 	}
 	if len(text) > 280 {
 		text = text[:280]

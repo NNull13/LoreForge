@@ -17,16 +17,22 @@ type Generator interface {
 }
 
 type GeneratorConfig struct {
-	ID             string
-	Type           episode.OutputType
-	Style          string
-	PublishTargets []publication.ChannelName
-	Scheduler      scheduling.Config
-	Seed           int64
-	ProviderDriver string
-	ProviderModel  string
-	ProviderConfig map[string]any
-	Options        map[string]any
+	ID                  string
+	Type                episode.OutputType
+	Style               string
+	PublishTargets      []publication.ChannelName
+	Scheduler           scheduling.Config
+	Seed                int64
+	ProviderDriver      string
+	ProviderModel       string
+	ProviderConfig      map[string]any
+	Options             map[string]any
+	ReferenceMode       string
+	ContinuityScope     string
+	MaxContinuityItems  int
+	MaxAssetReferences  int
+	IncludeTextMemories bool
+	AssetUsageAllowlist []string
 }
 
 type RegisteredGenerator struct {
@@ -49,6 +55,7 @@ type EpisodeRepository interface {
 	FindByID(ctx context.Context, id string) (episode.StoredRecord, error)
 	RecentCombos(ctx context.Context, limit int) ([]episode.Combo, error)
 	RecentCombosByGenerator(ctx context.Context, generatorID string, limit int) ([]episode.Combo, error)
+	RecentReferencesByGenerator(ctx context.Context, generatorID string, limit int) ([]episode.ContinuityReference, error)
 }
 
 type SchedulerStateRepository interface {

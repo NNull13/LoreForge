@@ -248,16 +248,22 @@ func buildGeneratorRegistry(cfg config.Config) (ports.GeneratorRegistry, error) 
 		}
 		def := ports.RegisteredGenerator{
 			Config: ports.GeneratorConfig{
-				ID:             ac.ID,
-				Type:           episode.OutputType(ac.Type),
-				Style:          ac.Style,
-				PublishTargets: toPublishTargets(ac.PublishTargets),
-				Scheduler:      schedulerCfg,
-				Seed:           ac.Scheduler.Seed,
-				ProviderDriver: ac.Provider.Driver,
-				ProviderModel:  ac.Provider.Model,
-				ProviderConfig: providerConfigMap(ac.Provider),
-				Options:        cloneAnyMap(ac.Options),
+				ID:                  ac.ID,
+				Type:                episode.OutputType(ac.Type),
+				Style:               ac.Style,
+				PublishTargets:      toPublishTargets(ac.PublishTargets),
+				Scheduler:           schedulerCfg,
+				Seed:                ac.Scheduler.Seed,
+				ProviderDriver:      ac.Provider.Driver,
+				ProviderModel:       ac.Provider.Model,
+				ProviderConfig:      providerConfigMap(ac.Provider),
+				Options:             cloneAnyMap(ac.Options),
+				ReferenceMode:       optionString(ac.Options, "reference_mode", "creative"),
+				ContinuityScope:     optionString(ac.Options, "continuity_scope", "same_artist"),
+				MaxContinuityItems:  optionInt(ac.Options, "max_continuity_items", 3),
+				MaxAssetReferences:  optionInt(ac.Options, "max_asset_references", 4),
+				IncludeTextMemories: optionBool(ac.Options, "include_text_memories", true),
+				AssetUsageAllowlist: optionStringSlice(ac.Options, "asset_usage_allowlist"),
 			},
 		}
 		switch ac.Type {
@@ -363,4 +369,49 @@ func cloneAnyMap(in map[string]any) map[string]any {
 		out[key] = value
 	}
 	return out
+}
+
+func optionString(options map[string]any, key, fallback string) string {
+	if v, ok := options[key].(string); ok && strings.TrimSpace(v) != "" {
+		return v
+	}
+	return fallback
+}
+
+func optionBool(options map[string]any, key string, fallback bool) bool {
+	if v, ok := options[key].(bool); ok {
+		return v
+	}
+	return fallback
+}
+
+func optionInt(options map[string]any, key string, fallback int) int {
+	switch v := options[key].(type) {
+	case int:
+		return v
+	case int64:
+		return int(v)
+	case float64:
+		return int(v)
+	default:
+		return fallback
+	}
+}
+
+func optionStringSlice(options map[string]any, key string) []string {
+	switch v := options[key].(type) {
+	case []string:
+		return append([]string(nil), v...)
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			s, ok := item.(string)
+			if ok && s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
 }
