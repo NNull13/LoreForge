@@ -2,6 +2,7 @@ package filesystem
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -47,5 +48,21 @@ func (p Publisher) Publish(_ context.Context, item publication.Item) (publicatio
 	if err := os.WriteFile(target, []byte(item.Content), 0o644); err != nil {
 		return publication.Result{}, err
 	}
-	return publication.Result{Channel: string(p.Name()), Success: true, ExternalID: target, Message: "published text"}, nil
+	result := publication.Result{Channel: string(p.Name()), Success: true, ExternalID: target, Message: "published text"}
+	if len(item.Parts) > 0 {
+		threadPath := filepath.Join(p.OutputDir, fmt.Sprintf("%s-%s-thread.json", stamp, item.EpisodeID))
+		body, err := json.MarshalIndent(map[string]any{
+			"episode_id": item.EpisodeID,
+			"format":     item.Format,
+			"parts":      item.Parts,
+		}, "", "  ")
+		if err != nil {
+			return publication.Result{}, err
+		}
+		if err := os.WriteFile(threadPath, body, 0o644); err != nil {
+			return publication.Result{}, err
+		}
+		result.Metadata = map[string]any{"thread_path": threadPath}
+	}
+	return result, nil
 }

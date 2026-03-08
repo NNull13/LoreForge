@@ -5,9 +5,15 @@ import "time"
 type OutputType string
 
 const (
-	OutputTypeText  OutputType = "text"
-	OutputTypeVideo OutputType = "video"
-	OutputTypeImage OutputType = "image"
+	OutputTypeTweetShort       OutputType = "tweet_short"
+	OutputTypeTweetThread      OutputType = "tweet_thread"
+	OutputTypeShortStory       OutputType = "short_story"
+	OutputTypeLongStory        OutputType = "long_story"
+	OutputTypePoem             OutputType = "poem"
+	OutputTypeSongLyrics       OutputType = "song_lyrics"
+	OutputTypeScreenplaySeries OutputType = "screenplay_series"
+	OutputTypeVideo            OutputType = "video"
+	OutputTypeImage            OutputType = "image"
 )
 
 type Status string
@@ -32,6 +38,7 @@ type Brief struct {
 	EventData            map[string]any            `json:"event_data,omitempty"`
 	VisualReferences     []VisualReference         `json:"visual_references,omitempty"`
 	ContinuityReferences []ContinuityReference     `json:"continuity_references,omitempty"`
+	TextConstraints      *TextConstraints          `json:"text_constraints,omitempty"`
 }
 
 type VisualReference struct {
@@ -63,9 +70,41 @@ type State struct {
 	Metadata         map[string]any `json:"metadata,omitempty"`
 }
 
+type TextPart struct {
+	Index   int    `json:"index"`
+	Content string `json:"content"`
+}
+
+type TextArtifact struct {
+	Title          string     `json:"title,omitempty"`
+	Body           string     `json:"body,omitempty"`
+	Parts          []TextPart `json:"parts,omitempty"`
+	WordCount      int        `json:"word_count,omitempty"`
+	CharacterCount int        `json:"character_count,omitempty"`
+}
+
+type TextConstraints struct {
+	Type               OutputType `json:"type"`
+	MinWords           int        `json:"min_words,omitempty"`
+	MaxWords           int        `json:"max_words,omitempty"`
+	MinParts           int        `json:"min_parts,omitempty"`
+	MaxParts           int        `json:"max_parts,omitempty"`
+	MaxCharsPerPart    int        `json:"max_chars_per_part,omitempty"`
+	RequireEntityMatch bool       `json:"require_entity_match,omitempty"`
+	RequireStructured  bool       `json:"require_structured,omitempty"`
+	Temperature        float64    `json:"temperature,omitempty"`
+	MaxOutputTokens    int        `json:"max_output_tokens,omitempty"`
+	TargetParts        int        `json:"target_parts,omitempty"`
+	TargetLineCount    int        `json:"target_line_count,omitempty"`
+	TargetSceneCount   int        `json:"target_scene_count,omitempty"`
+	TemplateStrictness string     `json:"template_strictness,omitempty"`
+	TwitterPublishable bool       `json:"twitter_publishable,omitempty"`
+}
+
 type Output struct {
 	Content          string         `json:"content"`
 	AssetPath        string         `json:"asset_path,omitempty"`
+	Text             *TextArtifact  `json:"text,omitempty"`
 	Provider         string         `json:"provider"`
 	Model            string         `json:"model"`
 	Prompt           string         `json:"prompt"`
@@ -106,6 +145,7 @@ type Record struct {
 	ProviderRequest  map[string]any `json:"provider_request"`
 	ProviderResponse map[string]any `json:"provider_response"`
 	OutputText       string         `json:"output_text,omitempty"`
+	OutputParts      []string       `json:"output_parts,omitempty"`
 	OutputAssetPath  string         `json:"output_asset_path,omitempty"`
 	Publish          map[string]any `json:"publish,omitempty"`
 }
@@ -119,4 +159,13 @@ type Combo struct {
 	WorldID      string
 	CharacterIDs []string
 	EventID      string
+}
+
+func (t OutputType) IsTextual() bool {
+	switch t {
+	case OutputTypeTweetShort, OutputTypeTweetThread, OutputTypeShortStory, OutputTypeLongStory, OutputTypePoem, OutputTypeSongLyrics, OutputTypeScreenplaySeries:
+		return true
+	default:
+		return false
+	}
 }

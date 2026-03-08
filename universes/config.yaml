@@ -14,13 +14,71 @@ scheduler:
   timezone: America/Chicago
 
 generation:
-  enabled_agents: [text, video, image]
+  enabled_agents: [short_story, video, image]
   weights:
-    text: 60
+    short_story: 25
+    tweet_short: 10
+    tweet_thread: 10
+    long_story: 15
+    poem: 10
+    song_lyrics: 10
+    screenplay_series: 10
     video: 25
-    image: 15
+    image: 5
   max_retries: 2
   recency_window: 20
+
+text:
+  formats:
+    tweet_short:
+      max_chars_per_part: 280
+      min_parts: 1
+      max_parts: 1
+      require_entity_match: true
+      temperature: 0.6
+      max_output_tokens: 250
+      twitter_publishable: true
+    tweet_thread:
+      min_parts: 2
+      max_parts: 5
+      target_parts: 3
+      max_chars_per_part: 280
+      require_structured: true
+      temperature: 0.6
+      max_output_tokens: 900
+      twitter_publishable: true
+    short_story:
+      min_words: 400
+      max_words: 1200
+      require_entity_match: true
+      temperature: 0.8
+      max_output_tokens: 1800
+    long_story:
+      min_words: 1800
+      max_words: 5000
+      require_entity_match: true
+      temperature: 0.85
+      max_output_tokens: 4000
+    poem:
+      min_words: 60
+      max_words: 500
+      target_line_count: 16
+      temperature: 0.9
+      max_output_tokens: 900
+    song_lyrics:
+      min_words: 120
+      max_words: 900
+      target_line_count: 24
+      require_structured: true
+      temperature: 0.85
+      max_output_tokens: 1400
+    screenplay_series:
+      min_words: 500
+      max_words: 2500
+      target_scene_count: 4
+      require_structured: true
+      temperature: 0.7
+      max_output_tokens: 1800
 
 providers:
   text:
@@ -34,10 +92,10 @@ providers:
     model: mock-image-v1
 
 artists:
-  - id: text-artist
-    type: text
+  - id: tweet-short-artist
+    type: tweet_short
     enabled: true
-    style: lyrical-canon
+    style: sharp-canon
     provider:
       driver: mock
       model: mock-text-v1
@@ -48,6 +106,92 @@ artists:
       min_interval: 3h
       max_interval: 6h
       seed: 42
+      timezone: America/Chicago
+  - id: tweet-thread-artist
+    type: tweet_thread
+    enabled: true
+    style: sharp-canon
+    provider:
+      driver: mock
+      model: mock-text-v1
+    publish_targets: [filesystem, twitter]
+    scheduler:
+      enabled: true
+      mode: fixed_interval
+      fixed_interval: 4h
+      seed: 84
+      timezone: America/Chicago
+  - id: short-story-artist
+    type: short_story
+    enabled: true
+    style: lyrical-canon
+    provider:
+      driver: mock
+      model: mock-text-v1
+    publish_targets: [filesystem]
+    scheduler:
+      enabled: true
+      mode: random_window
+      min_interval: 3h
+      max_interval: 6h
+      seed: 126
+      timezone: America/Chicago
+  - id: long-story-artist
+    type: long_story
+    enabled: true
+    style: epic-canon
+    provider:
+      driver: mock
+      model: mock-text-v1
+    publish_targets: [filesystem]
+    scheduler:
+      enabled: true
+      mode: fixed_interval
+      fixed_interval: 12h
+      seed: 168
+      timezone: America/Chicago
+  - id: poem-artist
+    type: poem
+    enabled: true
+    style: elegiac
+    provider:
+      driver: mock
+      model: mock-text-v1
+    publish_targets: [filesystem]
+    scheduler:
+      enabled: true
+      mode: random_window
+      min_interval: 6h
+      max_interval: 12h
+      seed: 210
+      timezone: America/Chicago
+  - id: song-lyrics-artist
+    type: song_lyrics
+    enabled: true
+    style: anthem
+    provider:
+      driver: mock
+      model: mock-text-v1
+    publish_targets: [filesystem]
+    scheduler:
+      enabled: true
+      mode: fixed_interval
+      fixed_interval: 10h
+      seed: 252
+      timezone: America/Chicago
+  - id: screenplay-series-artist
+    type: screenplay_series
+    enabled: true
+    style: tense-episodic
+    provider:
+      driver: mock
+      model: mock-text-v1
+    publish_targets: [filesystem]
+    scheduler:
+      enabled: true
+      mode: fixed_interval
+      fixed_interval: 8h
+      seed: 294
       timezone: America/Chicago
   - id: video-artist
     type: video

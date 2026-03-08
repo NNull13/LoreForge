@@ -9,16 +9,18 @@ LoreForge now expects the universe in the folder-per-entity format. The old flat
 ```bash
 go run ./cmd/loreforge run --config ./universes/config.yaml
 go run ./cmd/loreforge validate --config ./universes/config.yaml
-go run ./cmd/loreforge generate once --artist text-artist --config ./universes/config.yaml
-go run ./cmd/loreforge generate once --agent text --config ./universes/config.yaml
+go run ./cmd/loreforge generate once --artist short-story-artist --config ./universes/config.yaml
+go run ./cmd/loreforge generate once --artist tweet-thread-artist --config ./universes/config.yaml
 go run ./cmd/loreforge generate once --artist image-artist --config ./universes/config.yaml
 go run ./cmd/loreforge episode show <episode-id> --config ./universes/config.yaml
 go run ./cmd/loreforge universe lint ./universes/example-universe
-go run ./cmd/loreforge scheduler next-run --artist text-artist --config ./universes/config.yaml
+go run ./cmd/loreforge scheduler next-run --artist short-story-artist --config ./universes/config.yaml
 ```
 
 The bundled example config is wired to `mock` providers, but LoreForge now supports these real provider drivers:
 
+- `openai_text`
+- `lmstudio_text`
 - `openai_image`
 - `vertex_imagen`
 - `vertex_veo`
@@ -60,6 +62,8 @@ universes/example-universe/
   templates/
     short-story/
       short-story.md
+    tweet-thread/
+      tweet-thread.md
   rules/
     global-rules/
       global-rules.md
@@ -77,6 +81,31 @@ Episodes are stored in:
 - `context.json`, `prompt.txt`, `provider_request.json`, `provider_response.json`, `output.txt|*.mp4`, `score.json`, `publish.json`
 
 ## Provider Drivers
+
+### OpenAI Text
+
+```yaml
+providers:
+  text:
+    driver: openai_text
+    model: gpt-5-mini
+    api_key_env: OPENAI_API_KEY
+    timeout: 90s
+```
+
+### LM Studio Text
+
+```yaml
+providers:
+  text:
+    driver: lmstudio_text
+    model: qwen2.5-7b-instruct
+    base_url: http://localhost:1234/v1
+    timeout: 120s
+    options:
+      endpoint_mode: structured_chat
+      structured_output: true
+```
 
 ### Google Imagen (Vertex AI)
 
@@ -140,6 +169,20 @@ artists:
 ```
 
 Runway is wired as `image_to_video`. If you choose `runway_gen4`, configure either `options.bootstrap_image_generator` or `options.bootstrap_image_provider` so LoreForge can generate a bootstrap image before creating the video.
+
+## Text Formats
+
+LoreForge supports these textual output types:
+
+- `tweet_short`
+- `tweet_thread`
+- `short_story`
+- `long_story`
+- `poem`
+- `song_lyrics`
+- `screenplay_series`
+
+Each format can be configured globally under `text.formats`, then overridden per artist under `artists[].options.text`.
 
 ## Reference Modes
 

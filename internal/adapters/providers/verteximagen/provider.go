@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	providercontracts "loreforge/internal/adapters/providers/contracts"
+	"loreforge/internal/adapters/providers/contracts"
 	sharedauth "loreforge/internal/adapters/providers/shared/auth"
 	sharedfiles "loreforge/internal/adapters/providers/shared/files"
 	sharedhttp "loreforge/internal/adapters/providers/shared/httpclient"
@@ -22,14 +22,14 @@ type Provider struct {
 
 func (p Provider) Name() string { return "vertex-imagen" }
 
-func (p Provider) GenerateImage(ctx context.Context, input providercontracts.ImageRequest) (providercontracts.ImageResponse, error) {
+func (p Provider) GenerateImage(ctx context.Context, input contracts.ImageRequest) (contracts.ImageResponse, error) {
 	projectID, err := sharedauth.RequiredEnv(p.Config.ProjectIDEnv)
 	if err != nil {
-		return providercontracts.ImageResponse{}, err
+		return contracts.ImageResponse{}, err
 	}
 	token, err := sharedauth.GoogleAccessToken()
 	if err != nil {
-		return providercontracts.ImageResponse{}, err
+		return contracts.ImageResponse{}, err
 	}
 	baseURL := strings.TrimRight(p.Config.BaseURL, "/")
 	if baseURL == "" {
@@ -69,7 +69,7 @@ func (p Provider) GenerateImage(ctx context.Context, input providercontracts.Ima
 		"Authorization": "Bearer " + token,
 	}, payload)
 	if err != nil {
-		return providercontracts.ImageResponse{}, err
+		return contracts.ImageResponse{}, err
 	}
 	var parsed struct {
 		Predictions []struct {
@@ -79,17 +79,17 @@ func (p Provider) GenerateImage(ctx context.Context, input providercontracts.Ima
 		} `json:"predictions"`
 	}
 	if err := json.Unmarshal(body, &parsed); err != nil {
-		return providercontracts.ImageResponse{}, err
+		return contracts.ImageResponse{}, err
 	}
 	if len(parsed.Predictions) == 0 {
-		return providercontracts.ImageResponse{}, fmt.Errorf("vertex imagen response missing predictions")
+		return contracts.ImageResponse{}, fmt.Errorf("vertex imagen response missing predictions")
 	}
 	item := parsed.Predictions[0]
 	path, err := sharedfiles.WriteBase64Temp("vertex-imagen", item.MIMEType, item.BytesBase64Encoded)
 	if err != nil {
-		return providercontracts.ImageResponse{}, err
+		return contracts.ImageResponse{}, err
 	}
-	return providercontracts.ImageResponse{
+	return contracts.ImageResponse{
 		AssetPath:     path,
 		MIMEType:      item.MIMEType,
 		Model:         p.Config.Model,

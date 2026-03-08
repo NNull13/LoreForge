@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	providercontracts "loreforge/internal/adapters/providers/contracts"
+	"loreforge/internal/adapters/providers/contracts"
 	sharedauth "loreforge/internal/adapters/providers/shared/auth"
 	sharedfiles "loreforge/internal/adapters/providers/shared/files"
 	sharedhttp "loreforge/internal/adapters/providers/shared/httpclient"
@@ -23,14 +23,14 @@ type Provider struct {
 
 func (p Provider) Name() string { return "vertex-veo" }
 
-func (p Provider) GenerateVideo(ctx context.Context, input providercontracts.VideoRequest) (providercontracts.VideoResponse, error) {
+func (p Provider) GenerateVideo(ctx context.Context, input contracts.VideoRequest) (contracts.VideoResponse, error) {
 	projectID, err := sharedauth.RequiredEnv(p.Config.ProjectIDEnv)
 	if err != nil {
-		return providercontracts.VideoResponse{}, err
+		return contracts.VideoResponse{}, err
 	}
 	token, err := sharedauth.GoogleAccessToken()
 	if err != nil {
-		return providercontracts.VideoResponse{}, err
+		return contracts.VideoResponse{}, err
 	}
 	baseURL := strings.TrimRight(p.Config.BaseURL, "/")
 	if baseURL == "" {
@@ -59,7 +59,7 @@ func (p Provider) GenerateVideo(ctx context.Context, input providercontracts.Vid
 		refs := make([]map[string]any, 0, len(input.ReferenceImages))
 		for _, ref := range input.ReferenceImages {
 			if strings.HasPrefix(p.Config.Model, "veo-3.1") && ref.ReferenceType == "style" {
-				return providercontracts.VideoResponse{}, fmt.Errorf("veo-3.1 does not support style reference images")
+				return contracts.VideoResponse{}, fmt.Errorf("veo-3.1 does not support style reference images")
 			}
 			item := map[string]any{"referenceType": ref.ReferenceType}
 			switch {
@@ -76,16 +76,16 @@ func (p Provider) GenerateVideo(ctx context.Context, input providercontracts.Vid
 		"Authorization": "Bearer " + token,
 	}, payload)
 	if err != nil {
-		return providercontracts.VideoResponse{}, err
+		return contracts.VideoResponse{}, err
 	}
 	var op struct {
 		Name string `json:"name"`
 	}
 	if err := json.Unmarshal(body, &op); err != nil {
-		return providercontracts.VideoResponse{}, err
+		return contracts.VideoResponse{}, err
 	}
 	if op.Name == "" {
-		return providercontracts.VideoResponse{}, fmt.Errorf("vertex veo response missing operation name")
+		return contracts.VideoResponse{}, fmt.Errorf("vertex veo response missing operation name")
 	}
 	pollCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -122,19 +122,19 @@ func (p Provider) GenerateVideo(ctx context.Context, input providercontracts.Vid
 		return true, nil
 	})
 	if err != nil {
-		return providercontracts.VideoResponse{}, err
+		return contracts.VideoResponse{}, err
 	}
 	mediaURL, err := sharedfiles.GCSMediaURLWithBase(outputURI, firstNonEmpty(optionString(p.Config.Options, "gcs_base_url", ""), "https://storage.googleapis.com"))
 	if err != nil {
-		return providercontracts.VideoResponse{}, err
+		return contracts.VideoResponse{}, err
 	}
 	path, _, err := sharedfiles.DownloadToTemp(ctx, client.HTTP, mediaURL, "vertex-veo", map[string]string{
 		"Authorization": "Bearer " + token,
 	})
 	if err != nil {
-		return providercontracts.VideoResponse{}, err
+		return contracts.VideoResponse{}, err
 	}
-	return providercontracts.VideoResponse{
+	return contracts.VideoResponse{
 		AssetPath: path,
 		JobID:     op.Name,
 		Model:     p.Config.Model,

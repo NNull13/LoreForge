@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	providercontracts "loreforge/internal/adapters/providers/contracts"
+	"loreforge/internal/adapters/providers/contracts"
 	"loreforge/internal/config"
 )
 
@@ -24,9 +24,9 @@ func TestGenerateVideoRejectsStyleReferenceForVeo31(t *testing.T) {
 	}
 	t.Setenv("GOOGLE_CLOUD_PROJECT", "project-1")
 	t.Setenv("GOOGLE_CLOUD_ACCESS_TOKEN", "token-1")
-	_, err := provider.GenerateVideo(context.Background(), providercontracts.VideoRequest{
+	_, err := provider.GenerateVideo(context.Background(), contracts.VideoRequest{
 		Prompt: "city",
-		ReferenceImages: []providercontracts.ReferenceImage{
+		ReferenceImages: []contracts.ReferenceImage{
 			{URI: "gs://bucket/ref.png", ReferenceType: "style"},
 		},
 	})
@@ -69,7 +69,7 @@ func TestGenerateVideoPollsOperationAndDownloadsFromGCSAPI(t *testing.T) {
 		HTTP: server.Client(),
 	}
 
-	resp, err := provider.GenerateVideo(context.Background(), providercontracts.VideoRequest{Prompt: "storm"})
+	resp, err := provider.GenerateVideo(context.Background(), contracts.VideoRequest{Prompt: "storm"})
 	if err != nil {
 		t.Fatalf("GenerateVideo returned error: %v", err)
 	}

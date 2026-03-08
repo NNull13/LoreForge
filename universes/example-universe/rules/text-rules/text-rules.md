@@ -1,6 +1,6 @@
 ---
 id: text-rules
 type: rule
-target: text
+target: textual
 ---
 Write concise narrative prose with concrete imagery.

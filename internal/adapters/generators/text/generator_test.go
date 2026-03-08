@@ -1,17 +1,25 @@
 package text
 
 import (
-	"strings"
+	"context"
 	"testing"
 
+	"loreforge/internal/adapters/providers/contracts"
+	"loreforge/internal/application/textsettings"
 	"loreforge/internal/domain/episode"
 )
 
-func TestBuildPromptIncludesReferences(t *testing.T) {
+func TestGenerateIncludesStructuredTextAndReferences(t *testing.T) {
 	t.Parallel()
 
-	prompt := buildPrompt(episode.Brief{
-		EpisodeType:  episode.OutputTypeText,
+	generator := Generator{
+		GeneratorID: "short-story-artist",
+		Format:      episode.OutputTypeShortStory,
+		Settings:    textsettings.SystemTextDefaults[episode.OutputTypeShortStory],
+		Provider:    fakeTextProvider{},
+	}
+	output, err := generator.Generate(context.Background(), episode.Brief{
+		EpisodeType:  episode.OutputTypeShortStory,
 		WorldID:      "glass-kingdom",
 		CharacterIDs: []string{"red-wanderer"},
 		EventID:      "lost-artifact",
@@ -24,12 +32,26 @@ func TestBuildPromptIncludesReferences(t *testing.T) {
 		ContinuityReferences: []episode.ContinuityReference{
 			{EpisodeID: "ep-1", Summary: "The wanderer crossed the ash bridge."},
 		},
-	})
+	}, episode.State{})
+	if err != nil {
+		t.Fatalf("Generate returned error: %v", err)
+	}
+	if output.Text == nil || output.Text.Body == "" {
+		t.Fatal("expected structured text artifact")
+	}
+	if output.ProviderRequest["json_schema"] == nil {
+		t.Fatal("expected json schema in provider request")
+	}
+}
 
-	if !strings.Contains(prompt, "Continuity Memories") {
-		t.Fatal("expected continuity section in prompt")
-	}
-	if !strings.Contains(prompt, "Visual Canon References") {
-		t.Fatal("expected visual refs section in prompt")
-	}
+type fakeTextProvider struct{}
+
+func (fakeTextProvider) Name() string { return "fake-text" }
+
+func (fakeTextProvider) GenerateText(context.Context, contracts.TextRequest) (contracts.TextResponse, error) {
+	return contracts.TextResponse{
+		Title:   "Ash Garden",
+		Content: "Red Wanderer crossed the ash bridge and The Architect answered from the gate.",
+		Model:   "fake-text-v1",
+	}, nil
 }

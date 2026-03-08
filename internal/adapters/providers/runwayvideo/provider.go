@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	providercontracts "loreforge/internal/adapters/providers/contracts"
+	"loreforge/internal/adapters/providers/contracts"
 	sharedauth "loreforge/internal/adapters/providers/shared/auth"
 	sharedfiles "loreforge/internal/adapters/providers/shared/files"
 	sharedhttp "loreforge/internal/adapters/providers/shared/httpclient"
@@ -23,13 +23,13 @@ type Provider struct {
 
 func (p Provider) Name() string { return "runway-gen4" }
 
-func (p Provider) GenerateVideo(ctx context.Context, input providercontracts.VideoRequest) (providercontracts.VideoResponse, error) {
+func (p Provider) GenerateVideo(ctx context.Context, input contracts.VideoRequest) (contracts.VideoResponse, error) {
 	if strings.TrimSpace(input.PromptImage) == "" {
-		return providercontracts.VideoResponse{}, fmt.Errorf("runway_gen4 requires prompt_image")
+		return contracts.VideoResponse{}, fmt.Errorf("runway_gen4 requires prompt_image")
 	}
 	apiKey, err := sharedauth.BearerTokenFromEnv(p.Config.APIKeyEnv)
 	if err != nil {
-		return providercontracts.VideoResponse{}, err
+		return contracts.VideoResponse{}, err
 	}
 	baseURL := strings.TrimRight(p.Config.BaseURL, "/")
 	if baseURL == "" {
@@ -51,7 +51,7 @@ func (p Provider) GenerateVideo(ctx context.Context, input providercontracts.Vid
 	if !isRemoteAsset(asset) {
 		asset, err = sharedfiles.ToDataURI(asset)
 		if err != nil {
-			return providercontracts.VideoResponse{}, err
+			return contracts.VideoResponse{}, err
 		}
 	}
 	payload := map[string]any{
@@ -66,16 +66,16 @@ func (p Provider) GenerateVideo(ctx context.Context, input providercontracts.Vid
 		"X-Runway-Version": firstNonEmpty(p.Config.Version, "2024-11-06"),
 	}, payload)
 	if err != nil {
-		return providercontracts.VideoResponse{}, err
+		return contracts.VideoResponse{}, err
 	}
 	var created struct {
 		ID string `json:"id"`
 	}
 	if err := json.Unmarshal(body, &created); err != nil {
-		return providercontracts.VideoResponse{}, err
+		return contracts.VideoResponse{}, err
 	}
 	if created.ID == "" {
-		return providercontracts.VideoResponse{}, fmt.Errorf("runway task id missing")
+		return contracts.VideoResponse{}, fmt.Errorf("runway task id missing")
 	}
 	pollCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -110,13 +110,13 @@ func (p Provider) GenerateVideo(ctx context.Context, input providercontracts.Vid
 		}
 	})
 	if err != nil {
-		return providercontracts.VideoResponse{}, err
+		return contracts.VideoResponse{}, err
 	}
 	path, _, err := sharedfiles.DownloadToTemp(ctx, client.HTTP, outputURL, "runway-video", nil)
 	if err != nil {
-		return providercontracts.VideoResponse{}, err
+		return contracts.VideoResponse{}, err
 	}
-	return providercontracts.VideoResponse{
+	return contracts.VideoResponse{
 		AssetPath: path,
 		URL:       outputURL,
 		JobID:     created.ID,

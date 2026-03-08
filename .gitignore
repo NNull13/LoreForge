@@ -28,6 +28,6 @@ go.work.sum
 .DS_Store
 data/
 .claude/
-
+out/
 
 

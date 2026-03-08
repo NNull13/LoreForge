@@ -22,12 +22,12 @@ func TestBuildBrief_RespectsWorldCompatibility(t *testing.T) {
 			"e2": {ID: "e2", Type: "event", Data: map[string]any{"compatible_worlds": []any{"w2"}}},
 		},
 		Templates: map[string]universe.Entity{
-			"t1": {ID: "t1", Type: "template", Data: map[string]any{"output_type": "text"}},
+			"t1": {ID: "t1", Type: "template", Data: map[string]any{"output_type": "short_story"}},
 		},
 		Rules: map[string]universe.Entity{},
 	}
 
-	p := New(Config{Weights: map[string]int{"text": 100}, RecencyWindow: 5, Seed: 7})
+	p := New(Config{Weights: map[string]int{"short_story": 100}, RecencyWindow: 5, Seed: 7})
 	for i := 0; i < 20; i++ {
 		brief, err := p.BuildBrief(u, nil)
 		if err != nil {
@@ -54,10 +54,10 @@ func TestNew_DeterministicWhenSeededAndNotProduction(t *testing.T) {
 		Worlds:     map[string]universe.Entity{"w1": {ID: "w1", Type: "world"}},
 		Characters: map[string]universe.Entity{"c1": {ID: "c1", Type: "character"}},
 		Events:     map[string]universe.Entity{"e1": {ID: "e1", Type: "event"}},
-		Templates:  map[string]universe.Entity{"t1": {ID: "t1", Type: "template", Data: map[string]any{"output_type": "text"}}},
+		Templates:  map[string]universe.Entity{"t1": {ID: "t1", Type: "template", Data: map[string]any{"output_type": "short_story"}}},
 		Rules:      map[string]universe.Entity{},
 	}
-	cfg := Config{Weights: map[string]int{"text": 100}, RecencyWindow: 5, Seed: 1234, ProductionMode: false}
+	cfg := Config{Weights: map[string]int{"short_story": 100}, RecencyWindow: 5, Seed: 1234, ProductionMode: false}
 	p1 := New(cfg)
 	p2 := New(cfg)
 

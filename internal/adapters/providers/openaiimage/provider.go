@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	providercontracts "loreforge/internal/adapters/providers/contracts"
+	"loreforge/internal/adapters/providers/contracts"
 	sharedauth "loreforge/internal/adapters/providers/shared/auth"
 	sharedfiles "loreforge/internal/adapters/providers/shared/files"
 	sharedhttp "loreforge/internal/adapters/providers/shared/httpclient"
@@ -22,10 +22,10 @@ type Provider struct {
 
 func (p Provider) Name() string { return "openai-image" }
 
-func (p Provider) GenerateImage(ctx context.Context, input providercontracts.ImageRequest) (providercontracts.ImageResponse, error) {
+func (p Provider) GenerateImage(ctx context.Context, input contracts.ImageRequest) (contracts.ImageResponse, error) {
 	token, err := sharedauth.BearerTokenFromEnv(p.Config.APIKeyEnv)
 	if err != nil {
-		return providercontracts.ImageResponse{}, err
+		return contracts.ImageResponse{}, err
 	}
 	baseURL := strings.TrimRight(p.Config.BaseURL, "/")
 	if baseURL == "" {
@@ -52,13 +52,13 @@ func (p Provider) GenerateImage(ctx context.Context, input providercontracts.Ima
 		payload["background"] = v
 	}
 	if input.ReferenceImage != "" || input.MaskImage != "" {
-		return providercontracts.ImageResponse{}, fmt.Errorf("openai image edits are not implemented yet")
+		return contracts.ImageResponse{}, fmt.Errorf("openai image edits are not implemented yet")
 	}
 	resp, body, err := client.JSON(ctx, http.MethodPost, baseURL+"/images/generations", map[string]string{
 		"Authorization": "Bearer " + token,
 	}, payload)
 	if err != nil {
-		return providercontracts.ImageResponse{}, err
+		return contracts.ImageResponse{}, err
 	}
 	var parsed struct {
 		Data []struct {
@@ -68,13 +68,13 @@ func (p Provider) GenerateImage(ctx context.Context, input providercontracts.Ima
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &parsed); err != nil {
-		return providercontracts.ImageResponse{}, err
+		return contracts.ImageResponse{}, err
 	}
 	if len(parsed.Data) == 0 {
-		return providercontracts.ImageResponse{}, fmt.Errorf("openai image response missing data")
+		return contracts.ImageResponse{}, fmt.Errorf("openai image response missing data")
 	}
 	item := parsed.Data[0]
-	out := providercontracts.ImageResponse{
+	out := contracts.ImageResponse{
 		Model:         p.Config.Model,
 		RevisedPrompt: item.RevisedPrompt,
 		Metadata: map[string]any{
@@ -88,7 +88,7 @@ func (p Provider) GenerateImage(ctx context.Context, input providercontracts.Ima
 	if item.B64JSON != "" {
 		path, err := sharedfiles.WriteBase64Temp("openai-image", "image/png", item.B64JSON)
 		if err != nil {
-			return providercontracts.ImageResponse{}, err
+			return contracts.ImageResponse{}, err
 		}
 		out.AssetPath = path
 		out.MIMEType = "image/png"
@@ -97,14 +97,14 @@ func (p Provider) GenerateImage(ctx context.Context, input providercontracts.Ima
 	if item.URL != "" {
 		path, mimeType, err := sharedfiles.DownloadToTemp(ctx, client.HTTP, item.URL, "openai-image", nil)
 		if err != nil {
-			return providercontracts.ImageResponse{}, err
+			return contracts.ImageResponse{}, err
 		}
 		out.URL = item.URL
 		out.AssetPath = path
 		out.MIMEType = mimeType
 		return out, nil
 	}
-	return providercontracts.ImageResponse{}, fmt.Errorf("openai image response missing b64_json and url")
+	return contracts.ImageResponse{}, fmt.Errorf("openai image response missing b64_json and url")
 }
 
 func optionString(options map[string]any, key, fallback string) string {

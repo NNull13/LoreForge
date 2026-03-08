@@ -53,7 +53,7 @@ Event body.`)
 	writeEntityFile(t, filepath.Join(root, "templates", "short-story", "short-story.md"), `---
 id: short-story
 type: template
-output_type: text
+output_type: short_story
 ---
 Template body.`)
 	writeEntityFile(t, filepath.Join(root, "rules", "global-rules", "global-rules.md"), `---
@@ -109,7 +109,7 @@ Event body.`)
 	writeEntityFile(t, filepath.Join(root, "templates", "short-story", "short-story.md"), `---
 id: short-story
 type: template
-output_type: text
+output_type: short_story
 ---
 Template body.`)
 	writeEntityFile(t, filepath.Join(root, "rules", "global-rules", "global-rules.md"), `---

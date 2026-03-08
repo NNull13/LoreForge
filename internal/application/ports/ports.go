@@ -33,6 +33,7 @@ type GeneratorConfig struct {
 	MaxAssetReferences  int
 	IncludeTextMemories bool
 	AssetUsageAllowlist []string
+	TextConstraints     *episode.TextConstraints
 }
 
 type RegisteredGenerator struct {

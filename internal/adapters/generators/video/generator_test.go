@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	providercontracts "loreforge/internal/adapters/providers/contracts"
+	"loreforge/internal/adapters/providers/contracts"
 	"loreforge/internal/domain/episode"
 )
 
@@ -38,12 +38,12 @@ func TestGeneratePrefersSelectedPromptImage(t *testing.T) {
 }
 
 type fakeVideoProvider struct {
-	request providercontracts.VideoRequest
+	request contracts.VideoRequest
 }
 
 func (f *fakeVideoProvider) Name() string { return "fake-video" }
 
-func (f *fakeVideoProvider) GenerateVideo(_ context.Context, req providercontracts.VideoRequest) (providercontracts.VideoResponse, error) {
+func (f *fakeVideoProvider) GenerateVideo(_ context.Context, req contracts.VideoRequest) (contracts.VideoResponse, error) {
 	f.request = req
-	return providercontracts.VideoResponse{AssetPath: "/tmp/out.mp4", Model: "fake-video-v1"}, nil
+	return contracts.VideoResponse{AssetPath: "/tmp/out.mp4", Model: "fake-video-v1"}, nil
 }

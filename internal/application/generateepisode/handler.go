@@ -62,7 +62,11 @@ func (h Handler) Handle(ctx context.Context, req Request) (Result, error) {
 	}
 	brief.EpisodeType = def.Config.Type
 	brief.TemplateID = pickTemplateForType(u, string(def.Config.Type), brief.TemplateID)
+	if strings.TrimSpace(brief.TemplateID) == "" {
+		return Result{}, fmt.Errorf("%w: no template for output type %s", episode.ErrUniverseInvalid, def.Config.Type)
+	}
 	brief = enrichBriefWithUniverseData(brief, u)
+	brief.TextConstraints = def.Config.TextConstraints
 	continuityRefs, err := h.EpisodeRepo.RecentReferencesByGenerator(ctx, def.Config.ID, def.Config.MaxContinuityItems)
 	if err != nil {
 		return Result{}, err
@@ -153,6 +157,7 @@ func (h Handler) Handle(ctx context.Context, req Request) (Result, error) {
 		ProviderRequest:  sanitizeSecrets(out.ProviderRequest),
 		ProviderResponse: sanitizeSecrets(out.ProviderResponse),
 		OutputText:       out.Content,
+		OutputParts:      out.OutputParts(),
 		OutputAssetPath:  out.AssetPath,
 	}
 	record.Publish = h.publish(ctx, record, def.Config.PublishTargets)
@@ -309,7 +314,9 @@ func (h Handler) publish(ctx context.Context, record episode.Record, targets []p
 			GeneratorID:   record.Manifest.ArtistID,
 			GeneratorType: record.Manifest.ArtistType,
 			OutputType:    record.Manifest.OutputType,
+			Format:        record.Manifest.OutputType,
 			Content:       record.OutputText,
+			Parts:         append([]string(nil), record.OutputParts...),
 			AssetPath:     record.OutputAssetPath,
 			CreatedAt:     record.Manifest.CreatedAt,
 		})
@@ -328,7 +335,7 @@ func pickTemplateForType(u domainuniverse.Universe, outputType, fallback string)
 			return id
 		}
 	}
-	return fallback
+	return ""
 }
 
 func enrichBriefWithUniverseData(brief episode.Brief, u domainuniverse.Universe) episode.Brief {

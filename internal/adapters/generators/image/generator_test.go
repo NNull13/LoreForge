@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	providercontracts "loreforge/internal/adapters/providers/contracts"
+	"loreforge/internal/adapters/providers/contracts"
 	"loreforge/internal/domain/episode"
 )
 
@@ -41,6 +41,6 @@ type fakeImageProvider struct{}
 
 func (fakeImageProvider) Name() string { return "fake-image" }
 
-func (fakeImageProvider) GenerateImage(context.Context, providercontracts.ImageRequest) (providercontracts.ImageResponse, error) {
-	return providercontracts.ImageResponse{AssetPath: "/tmp/out.png", Model: "fake-image-v1"}, nil
+func (fakeImageProvider) GenerateImage(context.Context, contracts.ImageRequest) (contracts.ImageResponse, error) {
+	return contracts.ImageResponse{AssetPath: "/tmp/out.png", Model: "fake-image-v1"}, nil
 }

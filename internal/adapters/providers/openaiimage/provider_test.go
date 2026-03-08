@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	providercontracts "loreforge/internal/adapters/providers/contracts"
+	"loreforge/internal/adapters/providers/contracts"
 	"loreforge/internal/config"
 )
 
@@ -31,7 +31,7 @@ func TestGenerateImageFromBase64(t *testing.T) {
 		HTTP: server.Client(),
 	}
 
-	resp, err := provider.GenerateImage(context.Background(), providercontracts.ImageRequest{Prompt: "castle"})
+	resp, err := provider.GenerateImage(context.Background(), contracts.ImageRequest{Prompt: "castle"})
 	if err != nil {
 		t.Fatalf("GenerateImage returned error: %v", err)
 	}

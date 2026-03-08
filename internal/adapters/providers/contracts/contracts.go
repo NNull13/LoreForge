@@ -1,6 +1,10 @@
 package contracts
 
-import "context"
+import (
+	"context"
+
+	"loreforge/internal/domain/episode"
+)
 
 type ReferenceImage struct {
 	URI           string `json:"uri,omitempty"`
@@ -10,14 +14,22 @@ type ReferenceImage struct {
 }
 
 type TextRequest struct {
-	Prompt      string  `json:"prompt"`
-	Temperature float64 `json:"temperature"`
-	MaxTokens   int     `json:"max_tokens"`
+	Format          episode.OutputType `json:"format"`
+	SystemPrompt    string             `json:"system_prompt,omitempty"`
+	Prompt          string             `json:"prompt"`
+	Temperature     float64            `json:"temperature,omitempty"`
+	MaxOutputTokens int                `json:"max_output_tokens,omitempty"`
+	JSONSchema      map[string]any     `json:"json_schema,omitempty"`
+	Options         map[string]any     `json:"options,omitempty"`
 }
 
 type TextResponse struct {
-	Content string `json:"content"`
-	Model   string `json:"model"`
+	Content      string         `json:"content"`
+	Parts        []string       `json:"parts,omitempty"`
+	Title        string         `json:"title,omitempty"`
+	Model        string         `json:"model"`
+	FinishReason string         `json:"finish_reason,omitempty"`
+	Metadata     map[string]any `json:"metadata,omitempty"`
 }
 
 type TextProvider interface {

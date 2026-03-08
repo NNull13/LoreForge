@@ -19,6 +19,19 @@ func TestNewImageProviderSupportsRealDrivers(t *testing.T) {
 	}
 }
 
+func TestNewTextProviderSupportsRealDrivers(t *testing.T) {
+	t.Parallel()
+
+	for _, driver := range []string{"mock", "openai_text", "lmstudio_text"} {
+		t.Run(driver, func(t *testing.T) {
+			_, err := NewTextProvider(config.ProviderDriver{Driver: driver, Model: "test-model"})
+			if err != nil {
+				t.Fatalf("NewTextProvider returned error: %v", err)
+			}
+		})
+	}
+}
+
 func TestNewVideoProviderSupportsRealDrivers(t *testing.T) {
 	t.Parallel()
 
@@ -40,5 +53,8 @@ func TestNewProviderRejectsUnsupportedDriver(t *testing.T) {
 	}
 	if _, err := NewVideoProvider(config.ProviderDriver{Driver: "nope"}); err == nil {
 		t.Fatal("expected error for unsupported video driver")
+	}
+	if _, err := NewTextProvider(config.ProviderDriver{Driver: "nope"}); err == nil {
+		t.Fatal("expected error for unsupported text driver")
 	}
 }

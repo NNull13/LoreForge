@@ -2,127 +2,102 @@ package text
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
-	providercontracts "loreforge/internal/adapters/providers/contracts"
+	"loreforge/internal/adapters/providers/contracts"
+	"loreforge/internal/application/textprompt"
+	"loreforge/internal/application/textsettings"
 	"loreforge/internal/domain/episode"
 )
 
 type Generator struct {
 	GeneratorID string
-	Provider    providercontracts.TextProvider
+	Format      episode.OutputType
+	Settings    textsettings.ResolvedTextSettings
+	Provider    contracts.TextProvider
 }
 
 func (g Generator) ID() string { return g.GeneratorID }
 
-func (g Generator) Type() episode.OutputType { return episode.OutputTypeText }
+func (g Generator) Type() episode.OutputType { return g.Format }
 
 func (g Generator) Generate(ctx context.Context, brief episode.Brief, _ episode.State) (episode.Output, error) {
-	prompt := buildPrompt(brief)
-	resp, err := g.Provider.GenerateText(ctx, providercontracts.TextRequest{
-		Prompt:      prompt,
-		Temperature: 0.8,
-		MaxTokens:   500,
+	bundle := textprompt.Build(brief, g.Format, g.Settings)
+	resp, err := g.Provider.GenerateText(ctx, contracts.TextRequest{
+		Format:          g.Format,
+		SystemPrompt:    bundle.SystemPrompt,
+		Prompt:          bundle.UserPrompt,
+		Temperature:     g.Settings.Temperature,
+		MaxOutputTokens: g.Settings.MaxOutputTokens,
+		JSONSchema:      bundle.JSONSchema,
+		Options: map[string]any{
+			"template_strictness": g.Settings.TemplateStrictness,
+		},
 	})
 	if err != nil {
 		return episode.Output{}, err
 	}
+	textArtifact := buildTextArtifact(resp)
+	content := flattenTextArtifact(textArtifact, strings.TrimSpace(resp.Content))
 	return episode.Output{
-		Content:  strings.TrimSpace(resp.Content),
+		Content:  content,
+		Text:     textArtifact,
 		Provider: g.Provider.Name(),
 		Model:    resp.Model,
-		Prompt:   prompt,
+		Prompt:   strings.TrimSpace(bundle.SystemPrompt + "\n\n" + bundle.UserPrompt),
 		ProviderRequest: map[string]any{
-			"prompt": prompt,
+			"format":            g.Format,
+			"system_prompt":     bundle.SystemPrompt,
+			"prompt":            bundle.UserPrompt,
+			"temperature":       g.Settings.Temperature,
+			"max_output_tokens": g.Settings.MaxOutputTokens,
+			"json_schema":       bundle.JSONSchema,
 		},
 		ProviderResponse: map[string]any{
-			"content": resp.Content,
+			"content":       resp.Content,
+			"parts":         resp.Parts,
+			"title":         resp.Title,
+			"finish_reason": resp.FinishReason,
+			"metadata":      resp.Metadata,
 		},
 	}, nil
 }
 
-func buildPrompt(brief episode.Brief) string {
-	contextBlock := fmt.Sprintf(
-		"Context:\n- Type: %s\n- World: %s\n- Characters: %s\n- Event: %s\n- Tone: %s\n- Objective: %s\n- Rules: %s\n- WorldData: %v\n- EventData: %v\n- CharacterData: %v",
-		brief.EpisodeType,
-		brief.WorldID,
-		strings.Join(brief.CharacterIDs, ", "),
-		brief.EventID,
-		brief.Tone,
-		brief.Objective,
-		strings.Join(brief.CanonRules, " | "),
-		brief.WorldData,
-		brief.EventData,
-		brief.CharacterData,
-	)
-	if refs := formatContinuityReferences(brief.ContinuityReferences); refs != "" {
-		contextBlock += "\n\nContinuity Memories:\n" + refs
+func buildTextArtifact(resp contracts.TextResponse) *episode.TextArtifact {
+	artifact := &episode.TextArtifact{
+		Title: strings.TrimSpace(resp.Title),
 	}
-	if refs := formatVisualReferences(brief.VisualReferences); refs != "" {
-		contextBlock += "\n\nVisual Canon References:\n" + refs
+	if len(resp.Parts) > 0 {
+		artifact.Parts = make([]episode.TextPart, 0, len(resp.Parts))
+		for i, part := range resp.Parts {
+			artifact.Parts = append(artifact.Parts, episode.TextPart{Index: i, Content: strings.TrimSpace(part)})
+		}
+		artifact.Body = strings.Join(resp.Parts, "\n\n")
+	} else {
+		artifact.Body = strings.TrimSpace(resp.Content)
 	}
-	if strings.TrimSpace(brief.TemplateBody) != "" {
-		return fmt.Sprintf("%s\n\n%s", brief.TemplateBody, contextBlock)
-	}
-	additions := promptAdditions(brief)
-	return fmt.Sprintf(
-		"Create a short narrative. Type: %s. World: %s. Characters: %s. Event: %s. Tone: %s. Objective: %s. Rules: %s%s",
-		brief.EpisodeType,
-		brief.WorldID,
-		strings.Join(brief.CharacterIDs, ", "),
-		brief.EventID,
-		brief.Tone,
-		brief.Objective,
-		strings.Join(brief.CanonRules, " | "),
-		additions,
-	)
+	artifact.WordCount = len(strings.Fields(artifact.Body))
+	artifact.CharacterCount = len([]rune(artifact.Body))
+	return artifact
 }
 
-func promptAdditions(brief episode.Brief) string {
-	sections := make([]string, 0, 2)
-	if refs := formatContinuityReferences(brief.ContinuityReferences); refs != "" {
-		sections = append(sections, "Continuity Memories:\n"+refs)
+func flattenTextArtifact(artifact *episode.TextArtifact, fallback string) string {
+	if artifact == nil {
+		return fallback
 	}
-	if refs := formatVisualReferences(brief.VisualReferences); refs != "" {
-		sections = append(sections, "Visual Canon References:\n"+refs)
+	if len(artifact.Parts) > 0 {
+		parts := make([]string, 0, len(artifact.Parts))
+		for _, part := range artifact.Parts {
+			if strings.TrimSpace(part.Content) != "" {
+				parts = append(parts, strings.TrimSpace(part.Content))
+			}
+		}
+		if len(parts) > 0 {
+			return strings.Join(parts, "\n\n")
+		}
 	}
-	if len(sections) == 0 {
-		return ""
+	if strings.TrimSpace(artifact.Body) != "" {
+		return strings.TrimSpace(artifact.Body)
 	}
-	return "\n\n" + strings.Join(sections, "\n\n")
-}
-
-func formatContinuityReferences(refs []episode.ContinuityReference) string {
-	lines := make([]string, 0, len(refs))
-	for _, ref := range refs {
-		summary := strings.TrimSpace(ref.Summary)
-		if summary == "" {
-			summary = strings.TrimSpace(ref.OutputText)
-		}
-		if summary == "" {
-			summary = strings.TrimSpace(ref.Prompt)
-		}
-		if summary == "" {
-			continue
-		}
-		lines = append(lines, fmt.Sprintf("- Episode %s: %s", ref.EpisodeID, summary))
-	}
-	return strings.Join(lines, "\n")
-}
-
-func formatVisualReferences(refs []episode.VisualReference) string {
-	lines := make([]string, 0, len(refs))
-	for _, ref := range refs {
-		label := ref.AssetID
-		if label == "" {
-			label = ref.Path
-		}
-		if strings.TrimSpace(ref.Description) != "" {
-			lines = append(lines, fmt.Sprintf("- %s (%s): %s", label, ref.Usage, ref.Description))
-			continue
-		}
-		lines = append(lines, fmt.Sprintf("- %s (%s)", label, ref.Usage))
-	}
-	return strings.Join(lines, "\n")
+	return fallback
 }

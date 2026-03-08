@@ -12,15 +12,16 @@ import (
 )
 
 type Config struct {
-	App        AppConfig        `yaml:"app"`
-	Universe   UniverseConfig   `yaml:"universe"`
-	Scheduler  SchedulerConfig  `yaml:"scheduler"`
-	Generation GenerationConfig `yaml:"generation"`
-	Providers  ProvidersConfig  `yaml:"providers"`
-	Artists    []ArtistConfig   `yaml:"artists"`
-	Channels   ChannelsConfig   `yaml:"channels"`
-	Memory     MemoryConfig     `yaml:"memory"`
-	Logging    LoggingConfig    `yaml:"logging"`
+	App        AppConfig            `yaml:"app"`
+	Universe   UniverseConfig       `yaml:"universe"`
+	Scheduler  SchedulerConfig      `yaml:"scheduler"`
+	Generation GenerationConfig     `yaml:"generation"`
+	Text       TextGenerationConfig `yaml:"text"`
+	Providers  ProvidersConfig      `yaml:"providers"`
+	Artists    []ArtistConfig       `yaml:"artists"`
+	Channels   ChannelsConfig       `yaml:"channels"`
+	Memory     MemoryConfig         `yaml:"memory"`
+	Logging    LoggingConfig        `yaml:"logging"`
 }
 
 type AppConfig struct {
@@ -47,6 +48,27 @@ type GenerationConfig struct {
 	Weights       map[string]int `yaml:"weights"`
 	MaxRetries    int            `yaml:"max_retries"`
 	RecencyWindow int            `yaml:"recency_window"`
+}
+
+type TextFormatConfig struct {
+	MinWords           int      `yaml:"min_words" json:"min_words"`
+	MaxWords           int      `yaml:"max_words" json:"max_words"`
+	MinParts           int      `yaml:"min_parts" json:"min_parts"`
+	MaxParts           int      `yaml:"max_parts" json:"max_parts"`
+	MaxCharsPerPart    int      `yaml:"max_chars_per_part" json:"max_chars_per_part"`
+	RequireEntityMatch *bool    `yaml:"require_entity_match" json:"require_entity_match"`
+	RequireStructured  *bool    `yaml:"require_structured" json:"require_structured"`
+	Temperature        *float64 `yaml:"temperature" json:"temperature"`
+	MaxOutputTokens    int      `yaml:"max_output_tokens" json:"max_output_tokens"`
+	TargetParts        int      `yaml:"target_parts" json:"target_parts"`
+	TargetLineCount    int      `yaml:"target_line_count" json:"target_line_count"`
+	TargetSceneCount   int      `yaml:"target_scene_count" json:"target_scene_count"`
+	TemplateStrictness string   `yaml:"template_strictness" json:"template_strictness"`
+	TwitterPublishable *bool    `yaml:"twitter_publishable" json:"twitter_publishable"`
+}
+
+type TextGenerationConfig struct {
+	Formats map[string]TextFormatConfig `yaml:"formats"`
 }
 
 type ProviderDriver struct {
@@ -165,13 +187,13 @@ func (c *Config) Validate(configDir string) error {
 	}
 	c.applyProviderDefaults()
 	if len(c.Generation.EnabledAgents) == 0 {
-		c.Generation.EnabledAgents = []string{"text", "video", "image"}
+		c.Generation.EnabledAgents = []string{"short_story", "video", "image"}
 	}
 	if len(c.Generation.Weights) == 0 {
-		c.Generation.Weights = map[string]int{"text": 60, "video": 25, "image": 15}
+		c.Generation.Weights = map[string]int{"short_story": 60, "video": 25, "image": 15}
 	} else {
-		if c.Generation.Weights["text"] == 0 {
-			c.Generation.Weights["text"] = 60
+		if c.Generation.Weights["short_story"] == 0 {
+			c.Generation.Weights["short_story"] = 60
 		}
 		if c.Generation.Weights["video"] == 0 {
 			c.Generation.Weights["video"] = 25
@@ -258,12 +280,12 @@ func (c *Config) normalizeArtistsFromLegacy() {
 			PublishTargets: append([]string(nil), targets...),
 			Scheduler:      c.Scheduler,
 		}
-		switch typ {
-		case "text":
+		switch {
+		case isTextArtistType(typ):
 			artist.Provider = c.Providers.Text
-		case "video":
+		case typ == "video":
 			artist.Provider = c.Providers.Video
-		case "image":
+		case typ == "image":
 			artist.Provider = c.Providers.Image
 		}
 		c.Artists = append(c.Artists, artist)
@@ -295,22 +317,22 @@ func (c *Config) applyArtistDefaults(a *ArtistConfig) {
 		}
 	}
 	if a.Provider.Model == "" {
-		switch a.Type {
-		case "text":
+		switch {
+		case isTextArtistType(a.Type):
 			a.Provider = c.Providers.Text
-		case "video":
+		case a.Type == "video":
 			a.Provider = c.Providers.Video
-		case "image":
+		case a.Type == "image":
 			a.Provider = c.Providers.Image
 		}
 	}
 	if a.Provider.Driver == "" {
-		switch a.Type {
-		case "text":
+		switch {
+		case isTextArtistType(a.Type):
 			a.Provider.Driver = c.Providers.Text.Driver
-		case "video":
+		case a.Type == "video":
 			a.Provider.Driver = c.Providers.Video.Driver
-		case "image":
+		case a.Type == "image":
 			a.Provider.Driver = c.Providers.Image.Driver
 		}
 	}
@@ -318,10 +340,10 @@ func (c *Config) applyArtistDefaults(a *ArtistConfig) {
 		a.Options = map[string]any{}
 	}
 	if _, ok := a.Options["reference_mode"]; !ok {
-		switch a.Type {
-		case "text":
+		switch {
+		case isTextArtistType(a.Type):
 			a.Options["reference_mode"] = "continuity_only"
-		case "image", "video":
+		case a.Type == "image", a.Type == "video":
 			a.Options["reference_mode"] = "continuity_plus_assets"
 		}
 	}
@@ -356,7 +378,7 @@ func (c *Config) validateArtists() error {
 			return fmt.Errorf("duplicate artist id: %s", a.ID)
 		}
 		seen[a.ID] = true
-		if a.Type != "text" && a.Type != "video" && a.Type != "image" {
+		if !isTextArtistType(a.Type) && a.Type != "video" && a.Type != "image" {
 			return fmt.Errorf("artist %s has invalid type: %s", a.ID, a.Type)
 		}
 		if a.Provider.Driver == "" {
@@ -441,8 +463,14 @@ func (c *Config) applyProviderDefaults() {
 	if c.Providers.Text.Driver == "" {
 		c.Providers.Text.Driver = "mock"
 	}
-	if c.Providers.Text.Model == "" {
+	if c.Providers.Text.Model == "" && c.Providers.Text.Driver == "mock" {
 		c.Providers.Text.Model = "mock-text-v1"
+	}
+	if c.Providers.Text.Model == "" && c.Providers.Text.Driver == "openai_text" {
+		c.Providers.Text.Model = "gpt-5-mini"
+	}
+	if c.Providers.Text.Model == "" && c.Providers.Text.Driver == "lmstudio_text" {
+		c.Providers.Text.Model = "qwen2.5-7b-instruct"
 	}
 	if c.Providers.Video.Driver == "" {
 		c.Providers.Video.Driver = "mock"
@@ -468,6 +496,9 @@ func (c *Config) applyProviderDefaults() {
 	if c.Providers.Text.Timeout == "" {
 		c.Providers.Text.Timeout = "2m"
 	}
+	if c.Providers.Text.Driver == "lmstudio_text" && c.Providers.Text.BaseURL == "" {
+		c.Providers.Text.BaseURL = "http://localhost:1234/v1"
+	}
 	if c.Providers.Image.Location == "" {
 		c.Providers.Image.Location = "us-central1"
 	}
@@ -484,6 +515,33 @@ func validateProviderDriver(a ArtistConfig) error {
 	switch driver {
 	case "mock":
 		return nil
+	case "openai_text":
+		if !isTextArtistType(a.Type) {
+			return fmt.Errorf("artist %s provider.driver openai_text only supports textual types", a.ID)
+		}
+		if a.Provider.APIKeyEnv == "" {
+			return fmt.Errorf("artist %s provider.api_key_env is required for openai_text", a.ID)
+		}
+		if a.Provider.Model == "" {
+			return fmt.Errorf("artist %s provider.model is required for openai_text", a.ID)
+		}
+		if a.Provider.Timeout != "" {
+			if _, err := time.ParseDuration(a.Provider.Timeout); err != nil {
+				return fmt.Errorf("artist %s provider.timeout invalid: %w", a.ID, err)
+			}
+		}
+	case "lmstudio_text":
+		if !isTextArtistType(a.Type) {
+			return fmt.Errorf("artist %s provider.driver lmstudio_text only supports textual types", a.ID)
+		}
+		if a.Provider.Model == "" {
+			return fmt.Errorf("artist %s provider.model is required for lmstudio_text", a.ID)
+		}
+		if a.Provider.Timeout != "" {
+			if _, err := time.ParseDuration(a.Provider.Timeout); err != nil {
+				return fmt.Errorf("artist %s provider.timeout invalid: %w", a.ID, err)
+			}
+		}
 	case "openai_image":
 		if a.Provider.APIKeyEnv == "" {
 			return fmt.Errorf("artist %s provider.api_key_env is required for openai_image", a.ID)
@@ -548,4 +606,13 @@ func validateProviderDriver(a ArtistConfig) error {
 		return fmt.Errorf("artist %s provider.driver unsupported: %s", a.ID, driver)
 	}
 	return nil
+}
+
+func isTextArtistType(value string) bool {
+	switch value {
+	case "tweet_short", "tweet_thread", "short_story", "long_story", "poem", "song_lyrics", "screenplay_series":
+		return true
+	default:
+		return false
+	}
 }

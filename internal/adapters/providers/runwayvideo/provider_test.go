@@ -7,7 +7,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	providercontracts "loreforge/internal/adapters/providers/contracts"
+	"loreforge/internal/adapters/providers/contracts"
 	"loreforge/internal/config"
 )
 
@@ -15,7 +15,7 @@ func TestGenerateVideoRequiresPromptImage(t *testing.T) {
 	t.Parallel()
 
 	provider := Provider{Config: config.ProviderDriver{Driver: "runway_gen4", Model: "gen4_turbo", APIKeyEnv: "RUNWAY_API_KEY"}}
-	if _, err := provider.GenerateVideo(context.Background(), providercontracts.VideoRequest{Prompt: "storm"}); err == nil {
+	if _, err := provider.GenerateVideo(context.Background(), contracts.VideoRequest{Prompt: "storm"}); err == nil {
 		t.Fatal("expected error when prompt image is missing")
 	}
 }
@@ -57,7 +57,7 @@ func TestGenerateVideoPollsTaskAndDownloadsOutput(t *testing.T) {
 		HTTP: server.Client(),
 	}
 
-	resp, err := provider.GenerateVideo(context.Background(), providercontracts.VideoRequest{
+	resp, err := provider.GenerateVideo(context.Background(), contracts.VideoRequest{
 		Prompt:      "storm over ruins",
 		PromptImage: "data:image/png;base64,AAAA",
 	})

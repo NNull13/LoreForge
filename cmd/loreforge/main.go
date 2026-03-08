@@ -24,6 +24,7 @@ import (
 	"loreforge/internal/application/nextrun"
 	"loreforge/internal/application/ports"
 	"loreforge/internal/application/showepisode"
+	"loreforge/internal/application/textsettings"
 	"loreforge/internal/application/validateuniverse"
 	"loreforge/internal/config"
 	"loreforge/internal/domain/episode"
@@ -94,12 +95,12 @@ func validateCmd(args []string) {
 
 func generateCmd(args []string) {
 	if len(args) == 0 || args[0] != "once" {
-		fmt.Fprintln(os.Stderr, "usage: loreforge generate once [--artist text-artist|text] [--agent text] --config ./config.yaml")
+		fmt.Fprintln(os.Stderr, "usage: loreforge generate once [--artist short-story-artist|tweet-thread-artist] --config ./config.yaml")
 		os.Exit(1)
 	}
 	fs := flag.NewFlagSet("generate once", flag.ExitOnError)
 	artist := fs.String("artist", "", "artist id or type")
-	agent := fs.String("agent", "", "agent type (legacy alias): text|video|image")
+	agent := fs.String("agent", "", "legacy alias for generator type")
 	configPath := fs.String("config", "./universes/config.yaml", "path to config yaml")
 	_ = fs.Parse(args[1:])
 	cfg := loadConfigOrExit(*configPath)
@@ -150,7 +151,7 @@ func universeCmd(args []string) {
 
 func schedulerCmd(args []string) {
 	if len(args) == 0 || args[0] != "next-run" {
-		fmt.Fprintln(os.Stderr, "usage: loreforge scheduler next-run [--artist text-artist] --config ./config.yaml")
+		fmt.Fprintln(os.Stderr, "usage: loreforge scheduler next-run [--artist short-story-artist] --config ./config.yaml")
 		os.Exit(1)
 	}
 	fs := flag.NewFlagSet("scheduler next-run", flag.ExitOnError)
@@ -182,11 +183,11 @@ func usage() {
 Usage:
   loreforge run --config ./config.yaml
   loreforge validate --config ./config.yaml
-  loreforge generate once --artist text-artist --config ./config.yaml
-  loreforge generate once --agent text --config ./config.yaml
+  loreforge generate once --artist short-story-artist --config ./config.yaml
+  loreforge generate once --artist tweet-thread-artist --config ./config.yaml
   loreforge episode show <id> --config ./config.yaml
   loreforge universe lint ./universe
-  loreforge scheduler next-run --artist text-artist --config ./config.yaml
+  loreforge scheduler next-run --artist short-story-artist --config ./config.yaml
 `))
 }
 
@@ -266,20 +267,25 @@ func buildGeneratorRegistry(cfg config.Config) (ports.GeneratorRegistry, error) 
 				AssetUsageAllowlist: optionStringSlice(ac.Options, "asset_usage_allowlist"),
 			},
 		}
-		switch ac.Type {
-		case "text":
+		switch {
+		case isTextArtistType(ac.Type):
 			provider, err := providerfactory.NewTextProvider(ac.Provider)
 			if err != nil {
 				return nil, fmt.Errorf("generator %s provider: %w", ac.ID, err)
 			}
-			def.Generator = generatortext.Generator{GeneratorID: ac.ID, Provider: provider}
-		case "video":
+			settings, err := textsettings.ResolveTextSettings(cfg, ac)
+			if err != nil {
+				return nil, fmt.Errorf("generator %s text settings: %w", ac.ID, err)
+			}
+			def.Config.TextConstraints = settings.ToConstraints()
+			def.Generator = generatortext.Generator{GeneratorID: ac.ID, Format: episode.OutputType(ac.Type), Settings: settings, Provider: provider}
+		case ac.Type == "video":
 			provider, err := providerfactory.NewVideoProvider(ac.Provider)
 			if err != nil {
 				return nil, fmt.Errorf("generator %s provider: %w", ac.ID, err)
 			}
 			def.Generator = generatorvideo.Generator{GeneratorID: ac.ID, Provider: provider, Seed: ac.Scheduler.Seed}
-		case "image":
+		case ac.Type == "image":
 			provider, err := providerfactory.NewImageProvider(ac.Provider)
 			if err != nil {
 				return nil, fmt.Errorf("generator %s provider: %w", ac.ID, err)
@@ -413,5 +419,14 @@ func optionStringSlice(options map[string]any, key string) []string {
 		return out
 	default:
 		return nil
+	}
+}
+
+func isTextArtistType(value string) bool {
+	switch value {
+	case "tweet_short", "tweet_thread", "short_story", "long_story", "poem", "song_lyrics", "screenplay_series":
+		return true
+	default:
+		return false
 	}
 }

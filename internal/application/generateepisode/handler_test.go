@@ -3,6 +3,7 @@ package generateepisode
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -28,10 +29,10 @@ func TestHandleGeneratesAndPublishesEpisode(t *testing.T) {
 		GeneratorRegistry: fakeGeneratorRegistry{
 			items: []ports.RegisteredGenerator{
 				{
-					Generator: fakeGenerator{id: "text-artist", outputType: episode.OutputTypeText, content: "Aria walks through the ash garden and hears Kade whisper from the gate."},
+					Generator: fakeGenerator{id: "short-story-artist", outputType: episode.OutputTypeShortStory, content: "Aria walks through the ash garden and hears Kade whisper from the gate while the city keeps their old oath alive."},
 					Config: ports.GeneratorConfig{
-						ID:             "text-artist",
-						Type:           episode.OutputTypeText,
+						ID:             "short-story-artist",
+						Type:           episode.OutputTypeShortStory,
 						Style:          "lyrical-canon",
 						PublishTargets: []publication.ChannelName{publication.ChannelFilesystem},
 						Scheduler: scheduling.Config{
@@ -47,7 +48,7 @@ func TestHandleGeneratesAndPublishesEpisode(t *testing.T) {
 		Clock:             fakeClock{now: now},
 		IDGenerator:       fakeIDGen{id: "ep-123"},
 		Hasher:            fakeHasher{value: "universe-hash"},
-		Planner:           planner.New(planner.Config{Weights: map[string]int{"text": 100}, Seed: 1, RecencyWindow: 5}),
+		Planner:           planner.New(planner.Config{Weights: map[string]int{"short_story": 100}, Seed: 1, RecencyWindow: 5}),
 	}
 
 	result, err := handler.Handle(context.Background(), Request{MaxRetries: 1, RecencyWindow: 5})
@@ -60,7 +61,7 @@ func TestHandleGeneratesAndPublishesEpisode(t *testing.T) {
 	if !result.Record.Manifest.Published {
 		t.Fatal("expected episode to be published")
 	}
-	if schedulerRepo.savedGeneratorID != "text-artist" {
+	if schedulerRepo.savedGeneratorID != "short-story-artist" {
 		t.Fatalf("expected scheduler state to be saved for generator, got %s", schedulerRepo.savedGeneratorID)
 	}
 	if repo.saved.Manifest.EpisodeID != "ep-123" {
@@ -79,16 +80,16 @@ func TestHandleRetriesInvalidOutput(t *testing.T) {
 			items: []ports.RegisteredGenerator{
 				{
 					Generator: &sequenceGenerator{
-						id:         "text-artist",
-						outputType: episode.OutputTypeText,
+						id:         "short-story-artist",
+						outputType: episode.OutputTypeShortStory,
 						outputs: []episode.Output{
 							{Content: "tiny", Prompt: "p1", Provider: "mock", Model: "mock-text"},
-							{Content: "Aria finds Kade beside the ember gate and they trade the old oath in silence.", Prompt: "p2", Provider: "mock", Model: "mock-text"},
+							{Content: "Aria finds Kade beside the ember gate and they trade the old oath in silence while the city listens for what comes next.", Prompt: "p2", Provider: "mock", Model: "mock-text"},
 						},
 					},
 					Config: ports.GeneratorConfig{
-						ID:        "text-artist",
-						Type:      episode.OutputTypeText,
+						ID:        "short-story-artist",
+						Type:      episode.OutputTypeShortStory,
 						Scheduler: scheduling.Config{Mode: scheduling.ModeFixedInterval, FixedInterval: time.Hour, Timezone: "UTC"},
 					},
 				},
@@ -98,7 +99,7 @@ func TestHandleRetriesInvalidOutput(t *testing.T) {
 		Clock:             fakeClock{now: time.Now().UTC()},
 		IDGenerator:       fakeIDGen{id: "ep-456"},
 		Hasher:            fakeHasher{value: "hash"},
-		Planner:           planner.New(planner.Config{Weights: map[string]int{"text": 100}, Seed: 2, RecencyWindow: 5}),
+		Planner:           planner.New(planner.Config{Weights: map[string]int{"short_story": 100}, Seed: 2, RecencyWindow: 5}),
 	}
 
 	result, err := handler.Handle(context.Background(), Request{MaxRetries: 2, RecencyWindow: 5})
@@ -201,6 +202,11 @@ func (f fakeGenerator) Generate(context.Context, episode.Brief, episode.State) (
 		Prompt:   "prompt",
 		Provider: "mock-text",
 		Model:    "mock-text-v1",
+		Text: &episode.TextArtifact{
+			Body:           f.content,
+			WordCount:      len(strings.Fields(f.content)),
+			CharacterCount: len([]rune(f.content)),
+		},
 	}, nil
 }
 
@@ -281,7 +287,7 @@ func testUniverse() domainuniverse.Universe {
 			"gate-whisper": {ID: "gate-whisper", Type: "event", Data: map[string]any{"compatible_worlds": []any{"ember-city"}}},
 		},
 		Templates: map[string]domainuniverse.Entity{
-			"text-template": {ID: "text-template", Type: "template", Body: "MAX_CHARS: 400", Data: map[string]any{"output_type": "text"}},
+			"short-story-template": {ID: "short-story-template", Type: "template", Body: "MAX_CHARS: 400", Data: map[string]any{"output_type": "short_story"}},
 		},
 		Rules: map[string]domainuniverse.Entity{},
 	}

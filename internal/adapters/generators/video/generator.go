@@ -6,13 +6,13 @@ import (
 	"strings"
 	"time"
 
-	providercontracts "loreforge/internal/adapters/providers/contracts"
+	"loreforge/internal/adapters/providers/contracts"
 	"loreforge/internal/domain/episode"
 )
 
 type Generator struct {
 	GeneratorID string
-	Provider    providercontracts.VideoProvider
+	Provider    contracts.VideoProvider
 	Seed        int64
 }
 
@@ -30,7 +30,7 @@ func (g Generator) GenerateWithState(ctx context.Context, brief episode.Brief, s
 	if seed == 0 {
 		seed = time.Now().UnixNano()
 	}
-	req := providercontracts.VideoRequest{
+	req := contracts.VideoRequest{
 		Prompt:      prompt,
 		Duration:    15,
 		Seed:        seed,
@@ -162,8 +162,8 @@ func bestPromptImage(refs []episode.VisualReference) string {
 	return ""
 }
 
-func buildReferenceImages(refs []episode.VisualReference) []providercontracts.ReferenceImage {
-	out := make([]providercontracts.ReferenceImage, 0, len(refs))
+func buildReferenceImages(refs []episode.VisualReference) []contracts.ReferenceImage {
+	out := make([]contracts.ReferenceImage, 0, len(refs))
 	for _, ref := range refs {
 		if ref.MediaType != "image" {
 			continue
@@ -171,7 +171,7 @@ func buildReferenceImages(refs []episode.VisualReference) []providercontracts.Re
 		if ref.ModelRole != "asset" {
 			continue
 		}
-		out = append(out, providercontracts.ReferenceImage{
+		out = append(out, contracts.ReferenceImage{
 			URI:           ref.Path,
 			MIMEType:      "image/" + imageExtension(ref.Path),
 			ReferenceType: "asset",

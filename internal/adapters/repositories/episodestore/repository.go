@@ -190,6 +190,11 @@ func (r *Repository) writeSnapshot(path string, record episode.Record) error {
 			return err
 		}
 	}
+	if len(record.OutputParts) > 0 {
+		if err := writeJSON(filepath.Join(path, "output_parts.json"), record.OutputParts); err != nil {
+			return err
+		}
+	}
 	if record.OutputAssetPath != "" {
 		target := filepath.Join(path, filepath.Base(record.OutputAssetPath))
 		content, err := os.ReadFile(record.OutputAssetPath)

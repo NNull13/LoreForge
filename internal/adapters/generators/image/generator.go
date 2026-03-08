@@ -6,13 +6,13 @@ import (
 	"strings"
 	"time"
 
-	providercontracts "loreforge/internal/adapters/providers/contracts"
+	"loreforge/internal/adapters/providers/contracts"
 	"loreforge/internal/domain/episode"
 )
 
 type Generator struct {
 	GeneratorID string
-	Provider    providercontracts.ImageProvider
+	Provider    contracts.ImageProvider
 	Seed        int64
 }
 
@@ -26,7 +26,7 @@ func (g Generator) Generate(ctx context.Context, brief episode.Brief, _ episode.
 	if seed == 0 {
 		seed = time.Now().UnixNano()
 	}
-	req := providercontracts.ImageRequest{
+	req := contracts.ImageRequest{
 		Prompt:       prompt,
 		Width:        1024,
 		Height:       1024,

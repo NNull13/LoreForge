@@ -4,25 +4,31 @@ import (
 	"fmt"
 	"strings"
 
-	providercontracts "loreforge/internal/adapters/providers/contracts"
+	"loreforge/internal/adapters/providers/contracts"
+	"loreforge/internal/adapters/providers/lmstudiotext"
 	"loreforge/internal/adapters/providers/mock"
 	"loreforge/internal/adapters/providers/openaiimage"
+	"loreforge/internal/adapters/providers/openaitext"
 	"loreforge/internal/adapters/providers/runwayvideo"
 	"loreforge/internal/adapters/providers/verteximagen"
 	"loreforge/internal/adapters/providers/vertexveo"
 	"loreforge/internal/config"
 )
 
-func NewTextProvider(cfg config.ProviderDriver) (providercontracts.TextProvider, error) {
+func NewTextProvider(cfg config.ProviderDriver) (contracts.TextProvider, error) {
 	switch normalizeDriver(cfg.Driver) {
 	case "mock":
 		return mock.TextProvider{Model: cfg.Model}, nil
+	case "openai_text":
+		return openaitext.Provider{Config: cfg}, nil
+	case "lmstudio_text":
+		return lmstudiotext.Provider{Config: cfg}, nil
 	default:
 		return nil, fmt.Errorf("unsupported text provider driver: %s", cfg.Driver)
 	}
 }
 
-func NewVideoProvider(cfg config.ProviderDriver) (providercontracts.VideoProvider, error) {
+func NewVideoProvider(cfg config.ProviderDriver) (contracts.VideoProvider, error) {
 	switch normalizeDriver(cfg.Driver) {
 	case "mock":
 		return mock.VideoProvider{Model: cfg.Model}, nil
@@ -35,7 +41,7 @@ func NewVideoProvider(cfg config.ProviderDriver) (providercontracts.VideoProvide
 	}
 }
 
-func NewImageProvider(cfg config.ProviderDriver) (providercontracts.ImageProvider, error) {
+func NewImageProvider(cfg config.ProviderDriver) (contracts.ImageProvider, error) {
 	switch normalizeDriver(cfg.Driver) {
 	case "mock":
 		return mock.ImageProvider{Model: cfg.Model}, nil

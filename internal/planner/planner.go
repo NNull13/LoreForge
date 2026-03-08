@@ -102,12 +102,7 @@ func (p *Planner) pickTemplate(u universe.Universe, outputType string) (string, 
 		}
 	}
 	if len(ids) == 0 {
-		for id := range u.Templates {
-			ids = append(ids, id)
-		}
-	}
-	if len(ids) == 0 {
-		return "", errors.New("no templates available")
+		return "", errors.New("no templates available for output type")
 	}
 	return ids[p.rng.Intn(len(ids))], nil
 }
@@ -196,12 +191,23 @@ func (p *Planner) collectRules(u universe.Universe, outputType string) []string 
 		rules = append(rules, r.Body)
 		if t, ok := r.Data["target"].(string); ok && t == outputType {
 			rules = append(rules, r.Body)
+		} else if t == "textual" && isTextualOutputType(outputType) {
+			rules = append(rules, r.Body)
 		}
 	}
 	if gr, ok := u.Universe.Data["global_rules"]; ok {
 		rules = append(rules, toStringSlice(gr)...)
 	}
 	return rules
+}
+
+func isTextualOutputType(outputType string) bool {
+	switch outputType {
+	case string(episode.OutputTypeTweetShort), string(episode.OutputTypeTweetThread), string(episode.OutputTypeShortStory), string(episode.OutputTypeLongStory), string(episode.OutputTypePoem), string(episode.OutputTypeSongLyrics), string(episode.OutputTypeScreenplaySeries):
+		return true
+	default:
+		return false
+	}
 }
 
 func (p *Planner) universeTone(u universe.Universe) string {
