@@ -11,7 +11,6 @@ import (
 
 	"loreforge/internal/config"
 	"loreforge/internal/core"
-	"loreforge/internal/scheduler"
 	"loreforge/internal/universe"
 )
 
@@ -64,19 +63,24 @@ func validateCmd(args []string) {
 
 func generateCmd(args []string) {
 	if len(args) == 0 || args[0] != "once" {
-		fmt.Fprintln(os.Stderr, "usage: loreforge generate once --agent text --config ./config.yaml")
+		fmt.Fprintln(os.Stderr, "usage: loreforge generate once [--artist text-artist|text] [--agent text] --config ./config.yaml")
 		os.Exit(1)
 	}
 	fs := flag.NewFlagSet("generate once", flag.ExitOnError)
-	agent := fs.String("agent", "", "agent type: text|video")
+	artist := fs.String("artist", "", "artist id or type")
+	agent := fs.String("agent", "", "agent type (legacy alias): text|video|image")
 	configPath := fs.String("config", "./universes/config/config.yaml", "path to config yaml")
 	_ = fs.Parse(args[1:])
 	cfg := loadConfigOrExit(*configPath)
 	eng, err := core.New(cfg)
 	must(err)
-	rec, err := eng.GenerateOnce(context.Background(), *agent)
+	selected := *artist
+	if selected == "" {
+		selected = *agent
+	}
+	rec, err := eng.GenerateOnce(context.Background(), selected)
 	must(err)
-	fmt.Printf("generated: episode=%s type=%s\n", rec.Manifest.EpisodeID, rec.Manifest.OutputType)
+	fmt.Printf("generated: episode=%s type=%s artist=%s\n", rec.Manifest.EpisodeID, rec.Manifest.OutputType, rec.Manifest.ArtistID)
 }
 
 func episodeCmd(args []string) {
@@ -110,28 +114,26 @@ func universeCmd(args []string) {
 
 func schedulerCmd(args []string) {
 	if len(args) == 0 || args[0] != "next-run" {
-		fmt.Fprintln(os.Stderr, "usage: loreforge scheduler next-run --config ./config.yaml")
+		fmt.Fprintln(os.Stderr, "usage: loreforge scheduler next-run [--artist text-artist] --config ./config.yaml")
 		os.Exit(1)
 	}
 	fs := flag.NewFlagSet("scheduler next-run", flag.ExitOnError)
+	artist := fs.String("artist", "", "artist id")
 	configPath := fs.String("config", "./universes/config/config.yaml", "path to config yaml")
 	_ = fs.Parse(args[1:])
 	cfg := loadConfigOrExit(*configPath)
-	minInt, _ := time.ParseDuration(cfg.Scheduler.MinInterval)
-	maxInt, _ := time.ParseDuration(cfg.Scheduler.MaxInterval)
-	fixInt, _ := time.ParseDuration(cfg.Scheduler.FixedInterval)
-	sch, err := scheduler.New(scheduler.Config{
-		Mode:          cfg.Scheduler.Mode,
-		MinInterval:   minInt,
-		MaxInterval:   maxInt,
-		FixedInterval: fixInt,
-		Seed:          cfg.Scheduler.Seed,
-		Timezone:      cfg.Scheduler.Timezone,
-	})
+	eng, err := core.New(cfg)
 	must(err)
-	next, err := sch.NextRun(time.Now())
+	now := time.Now()
+	if *artist != "" {
+		next, err := eng.NextRunForArtist(*artist, now)
+		must(err)
+		fmt.Printf("next run (%s): %s\n", *artist, next.Format(time.RFC3339))
+		return
+	}
+	next, err := eng.NextRun(now)
 	must(err)
-	fmt.Printf("next run: %s\n", next.Format(time.RFC3339))
+	fmt.Printf("next run (any artist): %s\n", next.Format(time.RFC3339))
 }
 
 func loadConfigOrExit(path string) config.Config {
@@ -145,10 +147,11 @@ func usage() {
 Usage:
   loreforge run --config ./config.yaml
   loreforge validate --config ./config.yaml
+  loreforge generate once --artist text-artist --config ./config.yaml
   loreforge generate once --agent text --config ./config.yaml
   loreforge episode show <id> --config ./config.yaml
   loreforge universe lint ./universe
-  loreforge scheduler next-run --config ./config.yaml
+  loreforge scheduler next-run --artist text-artist --config ./config.yaml
 `))
 }
 

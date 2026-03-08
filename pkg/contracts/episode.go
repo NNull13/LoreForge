@@ -6,6 +6,9 @@ type EpisodeManifest struct {
 	EpisodeID       string         `json:"episode_id"`
 	CreatedAt       time.Time      `json:"created_at"`
 	Agent           string         `json:"agent"`
+	ArtistID        string         `json:"artist_id,omitempty"`
+	ArtistType      string         `json:"artist_type,omitempty"`
+	ArtistStyle     string         `json:"artist_style,omitempty"`
 	OutputType      string         `json:"output_type"`
 	UniverseVersion string         `json:"universe_version"`
 	WorldIDs        []string       `json:"world_ids"`

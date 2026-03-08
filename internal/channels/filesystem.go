@@ -21,16 +21,26 @@ func (f FilesystemChannel) Publish(_ context.Context, item contracts.Publishable
 		return contracts.PublishResult{}, err
 	}
 	stamp := time.Now().Format("20060102-150405")
-	if item.OutputType == "video" && item.AssetPath != "" {
+	if item.AssetPath != "" {
 		b, err := os.ReadFile(item.AssetPath)
 		if err != nil {
 			return contracts.PublishResult{}, err
 		}
-		target := filepath.Join(f.OutputDir, fmt.Sprintf("%s-%s.mp4", stamp, item.EpisodeID))
+		ext := filepath.Ext(item.AssetPath)
+		if ext == "" {
+			if item.OutputType == "video" {
+				ext = ".mp4"
+			} else if item.OutputType == "image" {
+				ext = ".png"
+			} else {
+				ext = ".bin"
+			}
+		}
+		target := filepath.Join(f.OutputDir, fmt.Sprintf("%s-%s%s", stamp, item.EpisodeID, ext))
 		if err := os.WriteFile(target, b, 0o644); err != nil {
 			return contracts.PublishResult{}, err
 		}
-		return contracts.PublishResult{Channel: f.Name(), Success: true, ExternalID: target, Message: "published video"}, nil
+		return contracts.PublishResult{Channel: f.Name(), Success: true, ExternalID: target, Message: "published asset"}, nil
 	}
 	target := filepath.Join(f.OutputDir, fmt.Sprintf("%s-%s.txt", stamp, item.EpisodeID))
 	if err := os.WriteFile(target, []byte(item.Content), 0o644); err != nil {

@@ -27,6 +27,7 @@ type Store struct {
 
 type HistoryEntry struct {
 	EpisodeID    string    `json:"episode_id"`
+	ArtistID     string    `json:"artist_id,omitempty"`
 	CreatedAt    time.Time `json:"created_at"`
 	WorldID      string    `json:"world_id"`
 	CharacterIDs []string  `json:"character_ids"`
@@ -34,6 +35,7 @@ type HistoryEntry struct {
 }
 
 type SchedulerState struct {
+	ArtistID  string     `json:"artist_id,omitempty"`
 	LastRunAt *time.Time `json:"last_run_at,omitempty"`
 	NextRunAt time.Time  `json:"next_run_at"`
 }
@@ -96,6 +98,7 @@ func (s *Store) SaveEpisode(r contracts.EpisodeRecord) (string, error) {
 	}
 	if err := s.appendHistory(HistoryEntry{
 		EpisodeID:    r.Manifest.EpisodeID,
+		ArtistID:     r.Manifest.ArtistID,
 		CreatedAt:    r.Manifest.CreatedAt,
 		WorldID:      firstOrEmpty(r.Manifest.WorldIDs),
 		CharacterIDs: r.Manifest.CharacterIDs,
@@ -179,13 +182,53 @@ func (s *Store) RecentCombos(limit int) ([]planner.HistoryCombo, error) {
 	return out, rows.Err()
 }
 
-func (s *Store) SaveSchedulerState(st SchedulerState) error {
-	return writeJSON(filepath.Join(s.baseDir, "scheduler_state.json"), st)
+func (s *Store) RecentCombosByArtist(artistID string, limit int) ([]planner.HistoryCombo, error) {
+	if limit <= 0 || strings.TrimSpace(artistID) == "" {
+		return nil, nil
+	}
+	if err := s.ensureDB(); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.Query(`
+		SELECT world_id, character_ids, event_id
+		FROM episodes
+		WHERE artist_id = ?
+		ORDER BY created_at DESC
+		LIMIT ?`, artistID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]planner.HistoryCombo, 0, limit)
+	for rows.Next() {
+		var worldID, charJSON, eventID string
+		if err := rows.Scan(&worldID, &charJSON, &eventID); err != nil {
+			return nil, err
+		}
+		var chars []string
+		if strings.TrimSpace(charJSON) != "" {
+			if err := json.Unmarshal([]byte(charJSON), &chars); err != nil {
+				return nil, err
+			}
+		}
+		out = append(out, planner.HistoryCombo{
+			WorldID:      worldID,
+			CharacterIDs: chars,
+			EventID:      eventID,
+		})
+	}
+	return out, rows.Err()
 }
 
-func (s *Store) LoadSchedulerState() (SchedulerState, error) {
+func (s *Store) SaveSchedulerState(artistID string, st SchedulerState) error {
+	st.ArtistID = artistID
+	return writeJSON(filepath.Join(s.baseDir, "scheduler_state_"+artistID+".json"), st)
+}
+
+func (s *Store) LoadSchedulerState(artistID string) (SchedulerState, error) {
 	var st SchedulerState
-	b, err := os.ReadFile(filepath.Join(s.baseDir, "scheduler_state.json"))
+	b, err := os.ReadFile(filepath.Join(s.baseDir, "scheduler_state_"+artistID+".json"))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return st, nil
@@ -207,9 +250,10 @@ func (s *Store) appendHistory(entry HistoryEntry) error {
 		return err
 	}
 	_, err = s.db.Exec(`
-		INSERT INTO episodes(id, created_at, world_id, character_ids, event_id)
-		VALUES(?, ?, ?, ?, ?)`,
+		INSERT INTO episodes(id, artist_id, created_at, world_id, character_ids, event_id)
+		VALUES(?, ?, ?, ?, ?, ?)`,
 		entry.EpisodeID,
+		entry.ArtistID,
 		entry.CreatedAt.UTC().Format(time.RFC3339Nano),
 		entry.WorldID,
 		string(b),
@@ -232,6 +276,7 @@ func (s *Store) ensureDB() error {
 		if _, err := db.Exec(`
 			CREATE TABLE IF NOT EXISTS episodes (
 				id TEXT PRIMARY KEY,
+				artist_id TEXT,
 				created_at DATETIME NOT NULL,
 				world_id TEXT,
 				character_ids TEXT,
@@ -241,7 +286,13 @@ func (s *Store) ensureDB() error {
 			s.initErr = err
 			return
 		}
+		_, _ = db.Exec(`ALTER TABLE episodes ADD COLUMN artist_id TEXT;`)
 		if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_episodes_created_at ON episodes(created_at DESC);`); err != nil {
+			_ = db.Close()
+			s.initErr = err
+			return
+		}
+		if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_episodes_artist_created_at ON episodes(artist_id, created_at DESC);`); err != nil {
 			_ = db.Close()
 			s.initErr = err
 			return

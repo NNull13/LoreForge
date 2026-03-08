@@ -14,27 +14,80 @@ scheduler:
   timezone: America/Chicago
 
 generation:
-  enabled_agents: [text, video]
+  enabled_agents: [text, video, image]
   weights:
-    text: 70
-    video: 30
+    text: 60
+    video: 25
+    image: 15
   max_retries: 2
   recency_window: 20
 
 providers:
   text:
-    driver: openai
-    model: gpt-5-mini
-    api_key_env: OPENAI_API_KEY
+    driver: mock
+    model: mock-text-v1
   video:
-    driver: some-video-api
-    model: video-v1
-    api_key_env: VIDEO_API_KEY
+    driver: mock
+    model: mock-video-v1
+  image:
+    driver: mock
+    model: mock-image-v1
+
+artists:
+  - id: text-artist
+    type: text
+    enabled: true
+    style: lyrical-canon
+    provider:
+      driver: mock
+      model: mock-text-v1
+    publish_targets: [filesystem, twitter]
+    scheduler:
+      enabled: true
+      mode: random_window
+      min_interval: 3h
+      max_interval: 6h
+      seed: 42
+      timezone: America/Chicago
+  - id: video-artist
+    type: video
+    enabled: true
+    style: cinematic-ritual
+    provider:
+      driver: mock
+      model: mock-video-v1
+    publish_targets: [filesystem]
+    scheduler:
+      enabled: true
+      mode: fixed_interval
+      fixed_interval: 6h
+      seed: 142
+      timezone: America/Chicago
+  - id: image-artist
+    type: image
+    enabled: true
+    style: symbolic-poster
+    provider:
+      driver: mock
+      model: mock-image-v1
+    publish_targets: [filesystem]
+    scheduler:
+      enabled: true
+      mode: random_window
+      min_interval: 4h
+      max_interval: 8h
+      seed: 242
+      timezone: America/Chicago
 
 channels:
   filesystem:
     enabled: true
     output_dir: ./out
+  twitter:
+    enabled: false
+    dry_run: true
+    bearer_token_env: TWITTER_BEARER_TOKEN
+    base_url: https://api.twitter.com
 
 memory:
   driver: sqlite

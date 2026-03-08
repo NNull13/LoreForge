@@ -1,4 +1,4 @@
-package video
+package artists
 
 import (
 	"context"
@@ -9,16 +9,16 @@ import (
 	"loreforge/pkg/contracts"
 )
 
-type Agent struct {
+type VideoArtist struct {
 	Provider contracts.VideoProvider
 	Seed     int64
 }
 
-func (a Agent) Name() string       { return "video-agent" }
-func (a Agent) OutputType() string { return "video" }
+func (a VideoArtist) Name() string       { return "video-artist" }
+func (a VideoArtist) OutputType() string { return "video" }
 
-func (a Agent) Generate(ctx context.Context, brief contracts.EpisodeBrief, _ contracts.EpisodeState) (contracts.EpisodeOutput, error) {
-	prompt := buildPrompt(brief)
+func (a VideoArtist) Generate(ctx context.Context, brief contracts.EpisodeBrief, _ contracts.EpisodeState) (contracts.EpisodeOutput, error) {
+	prompt := buildVideoPrompt(brief)
 	seed := a.Seed
 	if seed == 0 {
 		seed = time.Now().UnixNano()
@@ -47,7 +47,7 @@ func (a Agent) Generate(ctx context.Context, brief contracts.EpisodeBrief, _ con
 	}, nil
 }
 
-func buildPrompt(brief contracts.EpisodeBrief) string {
+func buildVideoPrompt(brief contracts.EpisodeBrief) string {
 	contextBlock := fmt.Sprintf(
 		"Context:\n- World: %s\n- Characters: %s\n- Event: %s\n- Tone: %s\n- Rules: %s\n- WorldData: %v\n- EventData: %v\n- CharacterData: %v",
 		brief.WorldID,

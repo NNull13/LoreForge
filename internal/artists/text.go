@@ -1,4 +1,4 @@
-package text
+package artists
 
 import (
 	"context"
@@ -8,16 +8,16 @@ import (
 	"loreforge/pkg/contracts"
 )
 
-type Agent struct {
+type TextArtist struct {
 	Provider contracts.TextProvider
 	Model    string
 }
 
-func (a Agent) Name() string       { return "text-agent" }
-func (a Agent) OutputType() string { return "text" }
+func (a TextArtist) Name() string       { return "text-artist" }
+func (a TextArtist) OutputType() string { return "text" }
 
-func (a Agent) Generate(ctx context.Context, brief contracts.EpisodeBrief, _ contracts.EpisodeState) (contracts.EpisodeOutput, error) {
-	prompt := buildPrompt(brief)
+func (a TextArtist) Generate(ctx context.Context, brief contracts.EpisodeBrief, _ contracts.EpisodeState) (contracts.EpisodeOutput, error) {
+	prompt := buildTextPrompt(brief)
 	resp, err := a.Provider.GenerateText(ctx, contracts.TextRequest{
 		Prompt:      prompt,
 		Temperature: 0.8,
@@ -40,7 +40,7 @@ func (a Agent) Generate(ctx context.Context, brief contracts.EpisodeBrief, _ con
 	}, nil
 }
 
-func buildPrompt(brief contracts.EpisodeBrief) string {
+func buildTextPrompt(brief contracts.EpisodeBrief) string {
 	contextBlock := fmt.Sprintf(
 		"Context:\n- Type: %s\n- World: %s\n- Characters: %s\n- Event: %s\n- Tone: %s\n- Objective: %s\n- Rules: %s\n- WorldData: %v\n- EventData: %v\n- CharacterData: %v",
 		brief.EpisodeType,

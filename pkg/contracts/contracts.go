@@ -42,6 +42,12 @@ type Agent interface {
 	Generate(ctx context.Context, brief EpisodeBrief, state EpisodeState) (EpisodeOutput, error)
 }
 
+type Artist interface {
+	Name() string
+	OutputType() string
+	Generate(ctx context.Context, brief EpisodeBrief, state EpisodeState) (EpisodeOutput, error)
+}
+
 type TextRequest struct {
 	Prompt      string  `json:"prompt"`
 	Temperature float64 `json:"temperature"`
@@ -64,6 +70,18 @@ type VideoResponse struct {
 	Model     string `json:"model"`
 }
 
+type ImageRequest struct {
+	Prompt string `json:"prompt"`
+	Width  int    `json:"width"`
+	Height int    `json:"height"`
+	Seed   int64  `json:"seed"`
+}
+
+type ImageResponse struct {
+	AssetPath string `json:"asset_path"`
+	Model     string `json:"model"`
+}
+
 type TextProvider interface {
 	GenerateText(ctx context.Context, input TextRequest) (TextResponse, error)
 	Name() string
@@ -74,8 +92,15 @@ type VideoProvider interface {
 	Name() string
 }
 
+type ImageProvider interface {
+	GenerateImage(ctx context.Context, input ImageRequest) (ImageResponse, error)
+	Name() string
+}
+
 type PublishableContent struct {
 	EpisodeID  string    `json:"episode_id"`
+	ArtistID   string    `json:"artist_id,omitempty"`
+	ArtistType string    `json:"artist_type,omitempty"`
 	OutputType string    `json:"output_type"`
 	Content    string    `json:"content,omitempty"`
 	AssetPath  string    `json:"asset_path,omitempty"`

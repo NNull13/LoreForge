@@ -4,11 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
-	"loreforge/internal/agents/text"
-	"loreforge/internal/agents/video"
+	"loreforge/internal/artists"
 	"loreforge/internal/channels"
 	"loreforge/internal/config"
 	"loreforge/internal/memory"
@@ -20,42 +20,46 @@ import (
 	"loreforge/pkg/contracts"
 )
 
-type Engine struct {
-	cfg       config.Config
-	store     *memory.Store
-	planner   *planner.Planner
+type artistRuntime struct {
+	cfg       config.ArtistConfig
+	artist    artists.Artist
 	scheduler *scheduler.Scheduler
-	agents    map[string]contracts.Agent
-	channels  []contracts.Channel
+}
+
+type Engine struct {
+	cfg      config.Config
+	store    *memory.Store
+	planner  *planner.Planner
+	artists  map[string]artistRuntime
+	channels map[string]contracts.Channel
 }
 
 func New(cfg config.Config) (*Engine, error) {
-	minInt, _ := time.ParseDuration(cfg.Scheduler.MinInterval)
-	maxInt, _ := time.ParseDuration(cfg.Scheduler.MaxInterval)
-	fixInt, _ := time.ParseDuration(cfg.Scheduler.FixedInterval)
-	sch, err := scheduler.New(scheduler.Config{
-		Mode:          cfg.Scheduler.Mode,
-		MinInterval:   minInt,
-		MaxInterval:   maxInt,
-		FixedInterval: fixInt,
-		Seed:          cfg.Scheduler.Seed,
-		Timezone:      cfg.Scheduler.Timezone,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	txtProvider := providers.MockTextProvider{Model: cfg.Providers.Text.Model}
-	vidProvider := providers.MockVideoProvider{Model: cfg.Providers.Video.Model}
-
-	agents := map[string]contracts.Agent{
-		"text":  text.Agent{Provider: txtProvider},
-		"video": video.Agent{Provider: vidProvider, Seed: cfg.Scheduler.Seed},
-	}
-
-	var outChannels []contracts.Channel
+	channelsMap := map[string]contracts.Channel{}
 	if cfg.Channels.Filesystem.Enabled {
-		outChannels = append(outChannels, channels.FilesystemChannel{OutputDir: cfg.Channels.Filesystem.OutputDir})
+		channelsMap["filesystem"] = channels.FilesystemChannel{OutputDir: cfg.Channels.Filesystem.OutputDir}
+	}
+	if cfg.Channels.Twitter.Enabled {
+		channelsMap["twitter"] = channels.TwitterChannel{
+			DryRun:         cfg.Channels.Twitter.DryRun,
+			BearerTokenEnv: cfg.Channels.Twitter.BearerTokenEnv,
+			BaseURL:        cfg.Channels.Twitter.BaseURL,
+		}
+	}
+
+	artists := map[string]artistRuntime{}
+	for _, ac := range cfg.Artists {
+		if ac.Enabled != nil && !*ac.Enabled {
+			continue
+		}
+		rt, err := buildArtistRuntime(ac)
+		if err != nil {
+			return nil, err
+		}
+		artists[ac.ID] = rt
+	}
+	if len(artists) == 0 {
+		return nil, errors.New("no enabled artists configured")
 	}
 
 	return &Engine{
@@ -67,10 +71,49 @@ func New(cfg config.Config) (*Engine, error) {
 			Seed:           cfg.Scheduler.Seed,
 			ProductionMode: isProductionEnv(cfg.App.Env),
 		}),
-		scheduler: sch,
-		agents:    agents,
-		channels:  outChannels,
+		artists:  artists,
+		channels: channelsMap,
 	}, nil
+}
+
+func buildArtistRuntime(ac config.ArtistConfig) (artistRuntime, error) {
+	minInt, _ := time.ParseDuration(ac.Scheduler.MinInterval)
+	maxInt, _ := time.ParseDuration(ac.Scheduler.MaxInterval)
+	fixInt, _ := time.ParseDuration(ac.Scheduler.FixedInterval)
+	sch, err := scheduler.New(scheduler.Config{
+		Mode:          ac.Scheduler.Mode,
+		MinInterval:   minInt,
+		MaxInterval:   maxInt,
+		FixedInterval: fixInt,
+		Seed:          ac.Scheduler.Seed,
+		Timezone:      ac.Scheduler.Timezone,
+	})
+	if err != nil {
+		return artistRuntime{}, fmt.Errorf("artist %s scheduler: %w", ac.ID, err)
+	}
+
+	switch ac.Type {
+	case "text":
+		p, err := providers.NewTextProvider(ac.Provider)
+		if err != nil {
+			return artistRuntime{}, fmt.Errorf("artist %s provider: %w", ac.ID, err)
+		}
+		return artistRuntime{cfg: ac, artist: artists.TextArtist{Provider: p}, scheduler: sch}, nil
+	case "video":
+		p, err := providers.NewVideoProvider(ac.Provider)
+		if err != nil {
+			return artistRuntime{}, fmt.Errorf("artist %s provider: %w", ac.ID, err)
+		}
+		return artistRuntime{cfg: ac, artist: artists.VideoArtist{Provider: p, Seed: ac.Scheduler.Seed}, scheduler: sch}, nil
+	case "image":
+		p, err := providers.NewImageProvider(ac.Provider)
+		if err != nil {
+			return artistRuntime{}, fmt.Errorf("artist %s provider: %w", ac.ID, err)
+		}
+		return artistRuntime{cfg: ac, artist: artists.ImageArtist{Provider: p, Seed: ac.Scheduler.Seed}, scheduler: sch}, nil
+	default:
+		return artistRuntime{}, fmt.Errorf("artist %s has unsupported type: %s", ac.ID, ac.Type)
+	}
 }
 
 func (e *Engine) ValidateUniverse() error {
@@ -79,31 +122,61 @@ func (e *Engine) ValidateUniverse() error {
 }
 
 func (e *Engine) NextRun(now time.Time) (time.Time, error) {
-	return e.scheduler.NextRun(now)
+	ids := e.artistIDs()
+	if len(ids) == 0 {
+		return time.Time{}, errors.New("no artists configured")
+	}
+	var best time.Time
+	for _, id := range ids {
+		next, err := e.NextRunForArtist(id, now)
+		if err != nil {
+			return time.Time{}, err
+		}
+		if best.IsZero() || next.Before(best) {
+			best = next
+		}
+	}
+	return best, nil
 }
 
-func (e *Engine) GenerateOnce(ctx context.Context, requestedAgent string) (contracts.EpisodeRecord, error) {
+func (e *Engine) NextRunForArtist(artistID string, now time.Time) (time.Time, error) {
+	rt, ok := e.artists[artistID]
+	if !ok {
+		return time.Time{}, fmt.Errorf("artist not available: %s", artistID)
+	}
+	st, err := e.store.LoadSchedulerState(artistID)
+	if err == nil && !st.NextRunAt.IsZero() {
+		return st.NextRunAt, nil
+	}
+	return rt.scheduler.NextRun(now)
+}
+
+func (e *Engine) GenerateOnce(ctx context.Context, requestedArtist string) (contracts.EpisodeRecord, error) {
 	u, err := universe.Load(e.cfg.Universe.Path)
 	if err != nil {
 		return contracts.EpisodeRecord{}, err
 	}
+	artistID, rt, err := e.resolveArtist(requestedArtist, time.Now())
+	if err != nil {
+		return contracts.EpisodeRecord{}, err
+	}
+
 	recent, err := e.store.RecentCombos(e.cfg.Generation.RecencyWindow)
 	if err != nil {
 		return contracts.EpisodeRecord{}, err
 	}
+	recentByArtist, err := e.store.RecentCombosByArtist(artistID, e.cfg.Generation.RecencyWindow)
+	if err != nil {
+		return contracts.EpisodeRecord{}, err
+	}
+
 	brief, err := e.planner.BuildBrief(u, recent)
 	if err != nil {
 		return contracts.EpisodeRecord{}, err
 	}
-	if requestedAgent != "" {
-		brief.EpisodeType = requestedAgent
-		brief.TemplateID = pickTemplateForType(u, requestedAgent, brief.TemplateID)
-	}
+	brief.EpisodeType = rt.cfg.Type
+	brief.TemplateID = pickTemplateForType(u, rt.cfg.Type, brief.TemplateID)
 	brief = enrichBriefWithUniverseData(brief, u)
-	agent, ok := e.agents[brief.EpisodeType]
-	if !ok {
-		return contracts.EpisodeRecord{}, fmt.Errorf("agent not available: %s", brief.EpisodeType)
-	}
 
 	uHash, err := util.HashDir(e.cfg.Universe.Path)
 	if err != nil {
@@ -111,10 +184,11 @@ func (e *Engine) GenerateOnce(ctx context.Context, requestedAgent string) (contr
 	}
 
 	state := contracts.EpisodeState{UniverseVersion: uHash}
+	state.RecentEpisodeIDs = combosToKeys(recentByArtist)
 	var out contracts.EpisodeOutput
 	var retry int
 	for {
-		out, err = agent.Generate(ctx, brief, state)
+		out, err = rt.artist.Generate(ctx, brief, state)
 		if err == nil {
 			verr := validateOutput(out, brief)
 			if verr == nil {
@@ -134,7 +208,10 @@ func (e *Engine) GenerateOnce(ctx context.Context, requestedAgent string) (contr
 		Manifest: contracts.EpisodeManifest{
 			EpisodeID:       epID,
 			CreatedAt:       now,
-			Agent:           agent.Name(),
+			Agent:           artistID,
+			ArtistID:        artistID,
+			ArtistType:      rt.cfg.Type,
+			ArtistStyle:     rt.cfg.Style,
 			OutputType:      brief.EpisodeType,
 			UniverseVersion: uHash,
 			WorldIDs:        []string{brief.WorldID},
@@ -145,7 +222,7 @@ func (e *Engine) GenerateOnce(ctx context.Context, requestedAgent string) (contr
 			PromptFinal:     out.Prompt,
 			Provider:        out.Provider,
 			Model:           out.Model,
-			Seed:            e.cfg.Scheduler.Seed,
+			Seed:            rt.cfg.Scheduler.Seed,
 			RetryCount:      retry,
 			Scores: map[string]any{
 				"length_ok":         len(out.Content) >= 50 || out.AssetPath != "",
@@ -154,8 +231,12 @@ func (e *Engine) GenerateOnce(ctx context.Context, requestedAgent string) (contr
 			State: "generated",
 		},
 		Context: map[string]any{
-			"brief":    brief,
-			"universe": u.Universe.ID,
+			"brief":          brief,
+			"universe":       u.Universe.ID,
+			"artist_id":      artistID,
+			"collab_recent":  recent,
+			"artist_recent":  recentByArtist,
+			"artist_targets": rt.cfg.PublishTargets,
 		},
 		Prompt:           out.Prompt,
 		ProviderRequest:  memory.SanitizeSecrets(out.ProviderRequest),
@@ -166,20 +247,27 @@ func (e *Engine) GenerateOnce(ctx context.Context, requestedAgent string) (contr
 
 	publishedChannels := make([]string, 0)
 	publishResult := map[string]any{}
-	for _, ch := range e.channels {
+	for _, target := range rt.cfg.PublishTargets {
+		ch, ok := e.channels[target]
+		if !ok {
+			publishResult[target] = map[string]any{"success": false, "error": "channel not configured"}
+			continue
+		}
 		res, err := ch.Publish(ctx, contracts.PublishableContent{
 			EpisodeID:  epID,
+			ArtistID:   artistID,
+			ArtistType: rt.cfg.Type,
 			OutputType: brief.EpisodeType,
 			Content:    out.Content,
 			AssetPath:  out.AssetPath,
 			CreatedAt:  now,
 		})
 		if err != nil {
-			publishResult[ch.Name()] = map[string]any{"success": false, "error": err.Error()}
+			publishResult[target] = map[string]any{"success": false, "error": err.Error()}
 			continue
 		}
-		publishedChannels = append(publishedChannels, ch.Name())
-		publishResult[ch.Name()] = res
+		publishedChannels = append(publishedChannels, target)
+		publishResult[target] = res
 	}
 	record.Manifest.Published = len(publishedChannels) > 0
 	record.Manifest.Channels = publishedChannels
@@ -191,15 +279,60 @@ func (e *Engine) GenerateOnce(ctx context.Context, requestedAgent string) (contr
 	if _, err := e.store.SaveEpisode(record); err != nil {
 		return contracts.EpisodeRecord{}, err
 	}
-	next, err := e.scheduler.NextRun(now)
+	next, err := rt.scheduler.NextRun(now)
 	if err == nil {
-		_ = e.store.SaveSchedulerState(memory.SchedulerState{LastRunAt: &now, NextRunAt: next})
+		_ = e.store.SaveSchedulerState(artistID, memory.SchedulerState{LastRunAt: &now, NextRunAt: next})
 	}
 	return record, nil
 }
 
 func (e *Engine) ShowEpisode(episodeID string) (string, contracts.EpisodeManifest, error) {
 	return e.store.FindEpisode(episodeID)
+}
+
+func (e *Engine) resolveArtist(requested string, now time.Time) (string, artistRuntime, error) {
+	if requested != "" {
+		if rt, ok := e.artists[requested]; ok {
+			return requested, rt, nil
+		}
+		for id, rt := range e.artists {
+			if rt.cfg.Type == requested {
+				return id, rt, nil
+			}
+		}
+		return "", artistRuntime{}, fmt.Errorf("artist not available: %s", requested)
+	}
+	return e.nextDueArtist(now)
+}
+
+func (e *Engine) nextDueArtist(now time.Time) (string, artistRuntime, error) {
+	ids := e.artistIDs()
+	if len(ids) == 0 {
+		return "", artistRuntime{}, errors.New("no artists configured")
+	}
+	bestID := ""
+	var bestAt time.Time
+	for _, id := range ids {
+		next, err := e.NextRunForArtist(id, now)
+		if err != nil {
+			return "", artistRuntime{}, err
+		}
+		if bestID == "" || next.Before(bestAt) {
+			bestID = id
+			bestAt = next
+		}
+	}
+	rt := e.artists[bestID]
+	return bestID, rt, nil
+}
+
+func (e *Engine) artistIDs() []string {
+	ids := make([]string, 0, len(e.artists))
+	for id := range e.artists {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
 }
 
 func validateOutput(out contracts.EpisodeOutput, brief contracts.EpisodeBrief) error {
@@ -312,4 +445,14 @@ func templateMaxChars(templateBody string) int {
 func isProductionEnv(env string) bool {
 	e := strings.ToLower(strings.TrimSpace(env))
 	return e == "prod" || e == "production"
+}
+
+func combosToKeys(combos []planner.HistoryCombo) []string {
+	out := make([]string, 0, len(combos))
+	for _, c := range combos {
+		chars := append([]string(nil), c.CharacterIDs...)
+		sort.Strings(chars)
+		out = append(out, c.WorldID+"|"+strings.Join(chars, ",")+"|"+c.EventID)
+	}
+	return out
 }
