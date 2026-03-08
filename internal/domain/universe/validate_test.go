@@ -14,6 +14,21 @@ func TestValidateAcceptsAssets(t *testing.T) {
 				{ID: "skyline", FileName: "skyline.png", Path: "/tmp/universe/skyline.png", MediaType: "image", Usage: "environment_reference", Weight: 100},
 			}},
 		},
+		Artists: map[string]Artist{
+			"ash-chorister": {
+				ID:          "ash-chorister",
+				Name:        "Ash Chorister",
+				Role:        "chronicler",
+				Summary:     "A solemn editorial witness.",
+				NonDiegetic: true,
+				Prompting:   ArtistPrompting{SystemIdentity: "You are The Ash Chorister."},
+				Presentation: ArtistPresentation{
+					Enabled:       true,
+					SignatureMode: "presentation_only",
+					FramingMode:   "none",
+				},
+			},
+		},
 		Rules: map[string]Entity{
 			"global-rules": {ID: "global-rules", Type: "rule", Path: "/tmp/rules/global-rules/global-rules.md"},
 		},
@@ -47,6 +62,21 @@ func TestValidateRejectsInvalidAssetUsage(t *testing.T) {
 			Assets: AssetSet{Items: []Asset{
 				{ID: "bad", FileName: "bad.png", Path: "/tmp/universe/bad.png", MediaType: "image", Usage: "bad_usage"},
 			}},
+		},
+		Artists: map[string]Artist{
+			"ash-chorister": {
+				ID:          "ash-chorister",
+				Name:        "Ash Chorister",
+				Role:        "chronicler",
+				Summary:     "A solemn editorial witness.",
+				NonDiegetic: true,
+				Prompting:   ArtistPrompting{SystemIdentity: "You are The Ash Chorister."},
+				Presentation: ArtistPresentation{
+					Enabled:       true,
+					SignatureMode: "presentation_only",
+					FramingMode:   "none",
+				},
+			},
 		},
 		Rules:      map[string]Entity{"global-rules": {ID: "global-rules", Type: "rule", Path: "/tmp/rules/global-rules/global-rules.md"}},
 		Worlds:     map[string]Entity{"glass-kingdom": {ID: "glass-kingdom", Type: "world", Path: "/tmp/worlds/glass-kingdom/glass-kingdom.md"}},

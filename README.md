@@ -1,43 +1,111 @@
 # LoreForge
 
-A Go engine to generate autonomous text and video episodes from a universe defined in Markdown + YAML frontmatter.
+LoreForge is a Go story engine for generating autonomous text, image, and video episodes from a universe defined in Markdown with YAML frontmatter.
 
-LoreForge now expects the universe in the folder-per-entity format. The old flat `characters/foo.md` layout is no longer supported.
+It is designed around three ideas:
 
-## Commands
+- the universe is content, not code
+- artists are editorial identities with their own voice and presentation
+- generation, publishing, and traceability are first-class
+
+## Why It Exists
+
+LoreForge is for building procedural narrative systems that still feel authored.
+
+You define:
+
+- a universe
+- its characters, worlds, events, rules, and templates
+- editorial artists that interpret that universe
+- providers and channels for generation and distribution
+
+LoreForge then picks a brief, generates an episode, publishes it, and stores the full trace of what happened.
+
+## What It Can Generate
+
+Text:
+
+- `tweet_short`
+- `tweet_thread`
+- `short_story`
+- `long_story`
+- `poem`
+- `song_lyrics`
+- `screenplay_series`
+
+Visual:
+
+- `image`
+- `video`
+
+## Quick Start
+
+### 1. Validate the bundled example
 
 ```bash
-go run ./cmd/loreforge run --config ./universes/config.yaml
 go run ./cmd/loreforge validate --config ./universes/config.yaml
+go run ./cmd/loreforge universe lint ./universes/example-universe
+```
+
+### 2. Inspect the configured artists
+
+```bash
+go run ./cmd/loreforge artists list --config ./universes/config.yaml
+```
+
+### 3. Generate something
+
+```bash
 go run ./cmd/loreforge generate once --artist short-story-artist --config ./universes/config.yaml
 go run ./cmd/loreforge generate once --artist tweet-thread-artist --config ./universes/config.yaml
 go run ./cmd/loreforge generate once --artist image-artist --config ./universes/config.yaml
-go run ./cmd/loreforge episode show <episode-id> --config ./universes/config.yaml
-go run ./cmd/loreforge universe lint ./universes/example-universe
-go run ./cmd/loreforge scheduler next-run --artist short-story-artist --config ./universes/config.yaml
 ```
 
-The bundled example config is wired to `mock` providers, but LoreForge now supports these real provider drivers:
+### 4. Let LoreForge choose the next due artist
 
-- `openai_text`
-- `lmstudio_text`
-- `openai_image`
-- `vertex_imagen`
-- `vertex_veo`
-- `runway_gen4`
+```bash
+go run ./cmd/loreforge run --config ./universes/config.yaml
+```
 
-## Structure
+## Core Commands
 
-- `cmd/loreforge`: CLI.
-- `internal/domain`: core business types and rules.
-- `internal/application`: use cases and ports.
-- `internal/adapters`: repositories, providers, publishers, and generators.
-- `internal/planner`: narrative brief with weights and anti-repetition.
-- `internal/platform`: infrastructure helpers such as IDs, hashing, and clocks.
+| Command | What it does |
+| --- | --- |
+| `loreforge validate --config ...` | Validates config, universe loading, and runtime wiring. |
+| `loreforge universe lint <path>` | Validates only the universe folder structure and schema. |
+| `loreforge artists list --config ...` | Lists active runtime artists, linked profiles, providers, and next scheduled run. |
+| `loreforge generate once --artist <id> --config ...` | Generates one episode for a specific artist. |
+| `loreforge run --config ...` | Generates one episode for the next due artist. |
+| `loreforge scheduler next-run --artist <id> --config ...` | Shows the next scheduled run for one artist or the nearest overall. |
+| `loreforge episode show <episode-id> --config ...` | Shows the stored manifest for one episode. |
+| `loreforge config refresh --config ...` | Reconciles config with persisted scheduler state without resetting existing schedules or memory. |
 
-## Universe Format
+## Config Refresh
 
-Each entity lives in its own directory:
+`config refresh` is the operational command for adopting config changes safely.
+
+It does this:
+
+- reloads the current config and universe
+- preserves scheduler state for existing artists
+- creates scheduler state for newly added artists
+- keeps orphaned scheduler state files untouched instead of deleting them
+
+It does not:
+
+- wipe episode history
+- reset artist continuity
+- rewrite existing scheduler state for active artists
+
+Example:
+
+```bash
+go run ./cmd/loreforge config refresh --config ./universes/config.yaml
+```
+
+## Universe Model
+
+LoreForge uses a folder-per-entity universe.
 
 ```text
 universes/example-universe/
@@ -45,17 +113,20 @@ universes/example-universe/
     universe.md
     assets.yaml
     skyline.png
+  artists/
+    ash-chorister/
+      artist.md
+      assets.yaml
+      portrait.png
   characters/
     red-wanderer/
       red-wanderer.md
       assets.yaml
       red-wanderer-base.png
-      red-wanderer-run.png
   worlds/
     glass-kingdom/
       glass-kingdom.md
       assets.yaml
-      glass-kingdom-moodboard.png
   events/
     lost-artifact/
       lost-artifact.md
@@ -69,145 +140,129 @@ universes/example-universe/
       global-rules.md
 ```
 
-`assets.yaml` is optional. If a directory contains visual files and no metadata file, LoreForge autodiscovers them with defaults.
+Every entity is content-addressable and can carry its own assets.
 
-See [universe-assets.md](/docs/universe-assets.md) for the full asset schema and reference selection rules.
+## Editorial Artists
 
-## Episode Persistence
+Artists are now part of the universe, not just runtime config.
 
-Episodes are stored in:
+An artist profile defines:
 
-- `data/episodes/{yyyy}/{mm}/{episode-id}/manifest.json`
-- `context.json`, `prompt.txt`, `provider_request.json`, `provider_response.json`, `output.txt|*.mp4`, `score.json`, `publish.json`
+- voice
+- mission
+- prompting rules
+- framing and signature policy
+- optional visual/editorial assets
+
+Runtime config binds a generator job to that profile through `profile_id`.
+
+Example:
+
+```yaml
+artists:
+  - id: short-story-artist
+    profile_id: ash-chorister
+    type: short_story
+    provider:
+      driver: openai_text
+      model: gpt-5-mini
+```
+
+The important rule is simple:
+
+`universe canon > template > format rules > artist lens > references > provider constraints`
+
+That keeps artists expressive without letting them break continuity.
+
+## Minimal Config Shape
+
+```yaml
+app:
+  name: loreforge
+  env: dev
+
+universe:
+  path: ./universes/example-universe
+
+providers:
+  text:
+    driver: mock
+    model: mock-text-v1
+  image:
+    driver: mock
+    model: mock-image-v1
+  video:
+    driver: mock
+    model: mock-video-v1
+
+artists:
+  - id: short-story-artist
+    profile_id: ash-chorister
+    type: short_story
+    provider:
+      driver: mock
+      model: mock-text-v1
+    publish_targets: [filesystem]
+```
+
+The full working example lives at `universes/config.yaml`.
 
 ## Provider Drivers
 
-### OpenAI Text
+| Capability | Drivers |
+| --- | --- |
+| Text | `mock`, `openai_text`, `lmstudio_text` |
+| Image | `mock`, `openai_image`, `vertex_imagen` |
+| Video | `mock`, `vertex_veo`, `runway_gen4` |
 
-```yaml
-providers:
-  text:
-    driver: openai_text
-    model: gpt-5-mini
-    api_key_env: OPENAI_API_KEY
-    timeout: 90s
-```
+### Notes
 
-### LM Studio Text
+- `lmstudio_text` lets you run local models through LM Studio's OpenAI-compatible server.
+- `runway_gen4` is wired as `image_to_video`.
+- `vertex_veo` and `runway_gen4` support async generation with polling.
+- The bundled example config uses `mock` providers so you can validate the full flow without external credentials.
 
-```yaml
-providers:
-  text:
-    driver: lmstudio_text
-    model: qwen2.5-7b-instruct
-    base_url: http://localhost:1234/v1
-    timeout: 120s
-    options:
-      endpoint_mode: structured_chat
-      structured_output: true
-```
+## Persistence
 
-### Google Imagen (Vertex AI)
+Each episode stores a full trace under `data/episodes/...`, including:
 
-```yaml
-providers:
-  image:
-    driver: vertex_imagen
-    model: imagen-4.0-fast-generate-001
-    project_id_env: GOOGLE_CLOUD_PROJECT
-    location: us-central1
-    timeout: 2m
-```
+- `manifest.json`
+- `context.json`
+- `prompt.txt`
+- `provider_request.json`
+- `provider_response.json`
+- `output.txt` or generated asset
+- `output_parts.json` when the output is multipart
+- `publish.json`
+- `presentation.json`
+- `artist_snapshot.json`
 
-Auth in the current implementation is resolved from `GOOGLE_CLOUD_ACCESS_TOKEN` or `VERTEX_AI_ACCESS_TOKEN`.
+This makes LoreForge useful not only as a generator, but also as an auditable narrative pipeline.
 
-### OpenAI GPT Image
+## Docs
 
-```yaml
-providers:
-  image:
-    driver: openai_image
-    model: gpt-image-1.5
-    api_key_env: OPENAI_API_KEY
-    timeout: 2m
-    options:
-      response_format: b64_json
-      quality: auto
-```
+- [Universe assets](./docs/universe-assets.md)
+- [Editorial artists](./docs/artists.md)
+- [OpenAI image](./docs/providers/openai-image.md)
+- [Vertex Imagen](./docs/providers/vertex-imagen.md)
+- [Vertex Veo](./docs/providers/vertex-veo.md)
+- [Runway Gen-4](./docs/providers/runway-gen4.md)
 
-`dall-e-2` and `dall-e-3` are still accepted as configured models, but OpenAI documents them as deprecated and supported only until May 12, 2026.
+## Current Status
 
-### Google Veo (Vertex AI)
+LoreForge is still pre-`1.0.0`.
 
-```yaml
-providers:
-  video:
-    driver: vertex_veo
-    model: veo-3.1-fast-generate-001
-    project_id_env: GOOGLE_CLOUD_PROJECT
-    location: us-central1
-    bucket_uri: gs://my-loreforge-assets
-    poll_interval: 10s
-    timeout: 10m
-```
+That is deliberate. The project is still moving fast, and the current architecture is optimized for:
 
-### Runway Gen-4
+- clean boundaries
+- provider experimentation
+- editorial flexibility
+- operational traceability
 
-```yaml
-artists:
-  - id: video-artist
-    type: video
-    provider:
-      driver: runway_gen4
-      model: gen4_turbo
-      api_key_env: RUNWAY_API_KEY
-      version: 2024-11-06
-      poll_interval: 5s
-      timeout: 10m
-    options:
-      bootstrap_image_provider: vertex_imagen
-```
+If you want a starting point, use the example universe, run `artists list`, then generate one text piece and one visual piece to see the full loop.
 
-Runway is wired as `image_to_video`. If you choose `runway_gen4`, configure either `options.bootstrap_image_generator` or `options.bootstrap_image_provider` so LoreForge can generate a bootstrap image before creating the video.
+--------------------
 
-## Text Formats
+Crafted with ❤️ by NoName13
 
-LoreForge supports these textual output types:
-
-- `tweet_short`
-- `tweet_thread`
-- `short_story`
-- `long_story`
-- `poem`
-- `song_lyrics`
-- `screenplay_series`
-
-Each format can be configured globally under `text.formats`, then overridden per artist under `artists[].options.text`.
-
-## Reference Modes
-
-Each artist can choose how to use universe assets and previous outputs from the same artist:
-
-```yaml
-artists:
-  - id: image-artist
-    type: image
-    options:
-      reference_mode: continuity_plus_assets
-      continuity_scope: same_artist
-      max_continuity_items: 3
-      max_asset_references: 4
-      include_text_memories: true
-      asset_usage_allowlist: [character_reference, environment_reference]
-```
-
-Supported `reference_mode` values:
-
-- `creative`
-- `continuity_only`
-- `continuity_plus_assets`
-- `assets_only`
-
-For `runway_gen4`, LoreForge first tries a selected universe asset with `model_roles.runway_gen4: prompt_image`. If no such asset exists, it falls back to `bootstrap_image_generator` or `bootstrap_image_provider`.
-
-See [openai-image.md](/docs/providers/openai-image.md), [vertex-imagen.md](/docs/providers/vertex-imagen.md), [vertex-veo.md](/docs/providers/vertex-veo.md), and [runway-gen4.md](/docs/providers/runway-gen4.md) for provider-specific notes.
+Questions? Open an issue • Want updates? Star the repo ⭐

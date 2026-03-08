@@ -1,0 +1,13 @@
+assets:
+  - file: portrait.png
+    id: ash-portrait
+    media_type: image
+    usage: artist_portrait
+    description: Editorial portrait reference for The Ash Chorister.
+    weight: 80
+  - file: signature-mark.png
+    id: ash-signature
+    media_type: image
+    usage: signature_mark
+    description: Signature mark used as branding reference.
+    weight: 60

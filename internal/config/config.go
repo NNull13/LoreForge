@@ -92,14 +92,34 @@ type ProvidersConfig struct {
 }
 
 type ArtistConfig struct {
-	ID             string          `yaml:"id"`
-	Type           string          `yaml:"type"`
-	Enabled        *bool           `yaml:"enabled"`
-	Style          string          `yaml:"style"`
-	Provider       ProviderDriver  `yaml:"provider"`
-	Options        map[string]any  `yaml:"options"`
-	PublishTargets []string        `yaml:"publish_targets"`
-	Scheduler      SchedulerConfig `yaml:"scheduler"`
+	ID              string                           `yaml:"id"`
+	ProfileID       string                           `yaml:"profile_id"`
+	Type            string                           `yaml:"type"`
+	Enabled         *bool                            `yaml:"enabled"`
+	Style           string                           `yaml:"style"`
+	Provider        ProviderDriver                   `yaml:"provider"`
+	Options         map[string]any                   `yaml:"options"`
+	PromptOverrides ArtistPromptOverrideConfig       `yaml:"prompt_overrides"`
+	Presentation    ArtistPresentationOverrideConfig `yaml:"presentation"`
+	PublishTargets  []string                         `yaml:"publish_targets"`
+	Scheduler       SchedulerConfig                  `yaml:"scheduler"`
+}
+
+type ArtistPromptOverrideConfig struct {
+	ExtraSystemRules []string `yaml:"extra_system_rules"`
+	TonalBiases      []string `yaml:"tonal_biases"`
+	LexicalCues      []string `yaml:"lexical_cues"`
+	Forbidden        []string `yaml:"forbidden"`
+}
+
+type ArtistPresentationOverrideConfig struct {
+	Enabled         *bool    `yaml:"enabled"`
+	SignatureMode   string   `yaml:"signature_mode"`
+	SignatureText   string   `yaml:"signature_text"`
+	FramingMode     string   `yaml:"framing_mode"`
+	IntroTemplate   string   `yaml:"intro_template"`
+	OutroTemplate   string   `yaml:"outro_template"`
+	AllowedChannels []string `yaml:"allowed_channels"`
 }
 
 type FilesystemChannelConfig struct {
@@ -296,6 +316,9 @@ func (c *Config) applyArtistDefaults(a *ArtistConfig) {
 	if a.ID == "" {
 		a.ID = a.Type + "-artist"
 	}
+	if a.ProfileID == "" {
+		a.ProfileID = a.ID
+	}
 	if a.Style == "" {
 		a.Style = "default"
 	}
@@ -374,6 +397,9 @@ func (c *Config) validateArtists() error {
 		if a.ID == "" {
 			return fmt.Errorf("artists[%d].id is required", i)
 		}
+		if a.ProfileID == "" {
+			return fmt.Errorf("artist %s profile_id is required", a.ID)
+		}
 		if seen[a.ID] {
 			return fmt.Errorf("duplicate artist id: %s", a.ID)
 		}
@@ -385,6 +411,9 @@ func (c *Config) validateArtists() error {
 			return fmt.Errorf("artist %s provider.driver is required", a.ID)
 		}
 		if err := validateArtistOptions(*a); err != nil {
+			return err
+		}
+		if err := validateArtistOverrides(*a); err != nil {
 			return err
 		}
 		if err := validateProviderDriver(*a); err != nil {
@@ -422,6 +451,24 @@ func validateArtistOptions(a ArtistConfig) error {
 			default:
 				return fmt.Errorf("artist %s options.asset_usage_allowlist contains invalid usage %s", a.ID, item)
 			}
+		}
+	}
+	return nil
+}
+
+func validateArtistOverrides(a ArtistConfig) error {
+	if a.Presentation.SignatureMode != "" {
+		switch a.Presentation.SignatureMode {
+		case "none", "presentation_only", "append", "prepend":
+		default:
+			return fmt.Errorf("artist %s presentation.signature_mode invalid: %s", a.ID, a.Presentation.SignatureMode)
+		}
+	}
+	if a.Presentation.FramingMode != "" {
+		switch a.Presentation.FramingMode {
+		case "none", "intro", "outro", "intro_outro":
+		default:
+			return fmt.Errorf("artist %s presentation.framing_mode invalid: %s", a.ID, a.Presentation.FramingMode)
 		}
 	}
 	return nil

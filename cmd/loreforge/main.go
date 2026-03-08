@@ -9,18 +9,20 @@ import (
 	"strings"
 	"time"
 
-	generatorimage "loreforge/internal/adapters/generators/image"
-	generatorregistry "loreforge/internal/adapters/generators/registry"
-	generatortext "loreforge/internal/adapters/generators/text"
-	generatorvideo "loreforge/internal/adapters/generators/video"
-	providerfactory "loreforge/internal/adapters/providers/factory"
-	publisherfilesystem "loreforge/internal/adapters/publishers/filesystem"
-	publisherregistry "loreforge/internal/adapters/publishers/registry"
-	publishertwitter "loreforge/internal/adapters/publishers/twitter"
+	"loreforge/internal/adapters/generators/image"
+	generators "loreforge/internal/adapters/generators/registry"
+	"loreforge/internal/adapters/generators/text"
+	"loreforge/internal/adapters/generators/video"
+	"loreforge/internal/adapters/providers/factory"
+	"loreforge/internal/adapters/publishers/filesystem"
+	publishers "loreforge/internal/adapters/publishers/registry"
+	"loreforge/internal/adapters/publishers/twitter"
 	"loreforge/internal/adapters/repositories/episodestore"
 	"loreforge/internal/adapters/repositories/schedulerstatefs"
 	"loreforge/internal/adapters/repositories/universefs"
+	"loreforge/internal/application/configrefresh"
 	"loreforge/internal/application/generateepisode"
+	"loreforge/internal/application/listartists"
 	"loreforge/internal/application/nextrun"
 	"loreforge/internal/application/ports"
 	"loreforge/internal/application/showepisode"
@@ -30,6 +32,7 @@ import (
 	"loreforge/internal/domain/episode"
 	"loreforge/internal/domain/publication"
 	"loreforge/internal/domain/scheduling"
+	"loreforge/internal/domain/universe"
 	"loreforge/internal/planner"
 	"loreforge/internal/platform/hashutil"
 	"loreforge/internal/platform/idgen"
@@ -41,6 +44,8 @@ type app struct {
 	validate validateuniverse.Handler
 	show     showepisode.Handler
 	nextRun  nextrun.Handler
+	refresh  configrefresh.Handler
+	artists  listartists.Handler
 }
 
 func main() {
@@ -61,6 +66,10 @@ func main() {
 		universeCmd(os.Args[2:])
 	case "scheduler":
 		schedulerCmd(os.Args[2:])
+	case "config":
+		configCmd(os.Args[2:])
+	case "artists":
+		artistsCmd(os.Args[2:])
 	default:
 		usage()
 		os.Exit(1)
@@ -172,6 +181,55 @@ func schedulerCmd(args []string) {
 	fmt.Printf("next run (any artist): %s\n", next.Format(time.RFC3339))
 }
 
+func configCmd(args []string) {
+	if len(args) == 0 || args[0] != "refresh" {
+		fmt.Fprintln(os.Stderr, "usage: loreforge config refresh --config ./config.yaml")
+		os.Exit(1)
+	}
+	fs := flag.NewFlagSet("config refresh", flag.ExitOnError)
+	configPath := fs.String("config", "./universes/config.yaml", "path to config yaml")
+	_ = fs.Parse(args[1:])
+	cfg := loadConfigOrExit(*configPath)
+	app, err := buildApp(cfg)
+	must(err)
+	res, err := app.refresh.Handle(context.Background())
+	must(err)
+	fmt.Printf("config refresh complete: active=%d created=%d preserved=%d orphaned=%d\n", res.Active, len(res.Created), len(res.Preserved), len(res.Orphaned))
+	if len(res.Created) > 0 {
+		fmt.Printf("created scheduler state for: %s\n", strings.Join(res.Created, ", "))
+	}
+	if len(res.Orphaned) > 0 {
+		fmt.Printf("orphaned scheduler state kept: %s\n", strings.Join(res.Orphaned, ", "))
+	}
+}
+
+func artistsCmd(args []string) {
+	if len(args) == 0 || args[0] != "list" {
+		fmt.Fprintln(os.Stderr, "usage: loreforge artists list --config ./config.yaml")
+		os.Exit(1)
+	}
+	fs := flag.NewFlagSet("artists list", flag.ExitOnError)
+	configPath := fs.String("config", "./universes/config.yaml", "path to config yaml")
+	_ = fs.Parse(args[1:])
+	cfg := loadConfigOrExit(*configPath)
+	app, err := buildApp(cfg)
+	must(err)
+	items, err := app.artists.Handle(context.Background())
+	must(err)
+	for _, item := range items {
+		fmt.Printf("%s | profile=%s | name=%s | type=%s | provider=%s/%s | next_run=%s | targets=%s\n",
+			item.GeneratorID,
+			item.ProfileID,
+			item.ArtistName,
+			item.Type,
+			item.ProviderDriver,
+			item.ProviderModel,
+			item.NextRun.Format(time.RFC3339),
+			strings.Join(item.PublishTargets, ","),
+		)
+	}
+}
+
 func loadConfigOrExit(path string) config.Config {
 	cfg, err := config.Load(path)
 	must(err)
@@ -185,6 +243,8 @@ Usage:
   loreforge validate --config ./config.yaml
   loreforge generate once --artist short-story-artist --config ./config.yaml
   loreforge generate once --artist tweet-thread-artist --config ./config.yaml
+  loreforge artists list --config ./config.yaml
+  loreforge config refresh --config ./config.yaml
   loreforge episode show <id> --config ./config.yaml
   loreforge universe lint ./universe
   loreforge scheduler next-run --artist short-story-artist --config ./config.yaml
@@ -200,12 +260,16 @@ func must(err error) {
 }
 
 func buildApp(cfg config.Config) (app, error) {
-	generators, err := buildGeneratorRegistry(cfg)
+	universeRepo := universefs.Repository{Root: cfg.Universe.Path}
+	universeData, err := universeRepo.Load(context.Background())
+	if err != nil {
+		return app{}, err
+	}
+	generators, err := buildGeneratorRegistry(cfg, universeData)
 	if err != nil {
 		return app{}, err
 	}
 	publishers := buildPublisherRegistry(cfg)
-	universeRepo := universefs.Repository{Root: cfg.Universe.Path}
 	episodeRepo := episodestore.New(cfg.Memory.DSN)
 	schedulerRepo := schedulerstatefs.Repository{BaseDir: episodestore.BaseDirFromDSN(cfg.Memory.DSN)}
 	plannerSvc := planner.New(planner.Config{
@@ -234,10 +298,21 @@ func buildApp(cfg config.Config) (app, error) {
 			SchedulerStateRepo: schedulerRepo,
 			Clock:              clock,
 		},
+		refresh: configrefresh.Handler{
+			Registry:           generators,
+			SchedulerStateRepo: schedulerRepo,
+			Clock:              clock,
+		},
+		artists: listartists.Handler{
+			Registry:           generators,
+			SchedulerStateRepo: schedulerRepo,
+			Clock:              clock,
+			Universe:           universeData,
+		},
 	}, nil
 }
 
-func buildGeneratorRegistry(cfg config.Config) (ports.GeneratorRegistry, error) {
+func buildGeneratorRegistry(cfg config.Config, u universe.Universe) (ports.GeneratorRegistry, error) {
 	defs := make([]ports.RegisteredGenerator, 0, len(cfg.Artists))
 	for _, ac := range cfg.Artists {
 		if ac.Enabled != nil && !*ac.Enabled {
@@ -249,27 +324,33 @@ func buildGeneratorRegistry(cfg config.Config) (ports.GeneratorRegistry, error) 
 		}
 		def := ports.RegisteredGenerator{
 			Config: ports.GeneratorConfig{
-				ID:                  ac.ID,
-				Type:                episode.OutputType(ac.Type),
-				Style:               ac.Style,
-				PublishTargets:      toPublishTargets(ac.PublishTargets),
-				Scheduler:           schedulerCfg,
-				Seed:                ac.Scheduler.Seed,
-				ProviderDriver:      ac.Provider.Driver,
-				ProviderModel:       ac.Provider.Model,
-				ProviderConfig:      providerConfigMap(ac.Provider),
-				Options:             cloneAnyMap(ac.Options),
-				ReferenceMode:       optionString(ac.Options, "reference_mode", "creative"),
-				ContinuityScope:     optionString(ac.Options, "continuity_scope", "same_artist"),
-				MaxContinuityItems:  optionInt(ac.Options, "max_continuity_items", 3),
-				MaxAssetReferences:  optionInt(ac.Options, "max_asset_references", 4),
-				IncludeTextMemories: optionBool(ac.Options, "include_text_memories", true),
-				AssetUsageAllowlist: optionStringSlice(ac.Options, "asset_usage_allowlist"),
+				ID:                    ac.ID,
+				ProfileID:             ac.ProfileID,
+				Type:                  episode.OutputType(ac.Type),
+				Style:                 ac.Style,
+				PublishTargets:        toPublishTargets(ac.PublishTargets),
+				Scheduler:             schedulerCfg,
+				Seed:                  ac.Scheduler.Seed,
+				ProviderDriver:        ac.Provider.Driver,
+				ProviderModel:         ac.Provider.Model,
+				ProviderConfig:        providerConfigMap(ac.Provider),
+				Options:               cloneAnyMap(ac.Options),
+				ReferenceMode:         optionString(ac.Options, "reference_mode", "creative"),
+				ContinuityScope:       optionString(ac.Options, "continuity_scope", "same_artist"),
+				MaxContinuityItems:    optionInt(ac.Options, "max_continuity_items", 3),
+				MaxAssetReferences:    optionInt(ac.Options, "max_asset_references", 4),
+				IncludeTextMemories:   optionBool(ac.Options, "include_text_memories", true),
+				AssetUsageAllowlist:   optionStringSlice(ac.Options, "asset_usage_allowlist"),
+				PromptOverrides:       promptOverridesMap(ac.PromptOverrides),
+				PresentationOverrides: presentationOverridesMap(ac.Presentation),
 			},
+		}
+		if _, ok := u.Artists[ac.ProfileID]; !ok {
+			return nil, fmt.Errorf("generator %s references unknown artist profile %s", ac.ID, ac.ProfileID)
 		}
 		switch {
 		case isTextArtistType(ac.Type):
-			provider, err := providerfactory.NewTextProvider(ac.Provider)
+			provider, err := factory.NewTextProvider(ac.Provider)
 			if err != nil {
 				return nil, fmt.Errorf("generator %s provider: %w", ac.ID, err)
 			}
@@ -278,40 +359,40 @@ func buildGeneratorRegistry(cfg config.Config) (ports.GeneratorRegistry, error) 
 				return nil, fmt.Errorf("generator %s text settings: %w", ac.ID, err)
 			}
 			def.Config.TextConstraints = settings.ToConstraints()
-			def.Generator = generatortext.Generator{GeneratorID: ac.ID, Format: episode.OutputType(ac.Type), Settings: settings, Provider: provider}
+			def.Generator = text.Generator{GeneratorID: ac.ID, Format: episode.OutputType(ac.Type), Settings: settings, Provider: provider}
 		case ac.Type == "video":
-			provider, err := providerfactory.NewVideoProvider(ac.Provider)
+			provider, err := factory.NewVideoProvider(ac.Provider)
 			if err != nil {
 				return nil, fmt.Errorf("generator %s provider: %w", ac.ID, err)
 			}
-			def.Generator = generatorvideo.Generator{GeneratorID: ac.ID, Provider: provider, Seed: ac.Scheduler.Seed}
+			def.Generator = video.Generator{GeneratorID: ac.ID, Provider: provider, Seed: ac.Scheduler.Seed}
 		case ac.Type == "image":
-			provider, err := providerfactory.NewImageProvider(ac.Provider)
+			provider, err := factory.NewImageProvider(ac.Provider)
 			if err != nil {
 				return nil, fmt.Errorf("generator %s provider: %w", ac.ID, err)
 			}
-			def.Generator = generatorimage.Generator{GeneratorID: ac.ID, Provider: provider, Seed: ac.Scheduler.Seed}
+			def.Generator = image.Generator{GeneratorID: ac.ID, Provider: provider, Seed: ac.Scheduler.Seed}
 		default:
 			return nil, fmt.Errorf("generator %s has unsupported type: %s", ac.ID, ac.Type)
 		}
 		defs = append(defs, def)
 	}
-	return generatorregistry.New(defs), nil
+	return generators.New(defs), nil
 }
 
 func buildPublisherRegistry(cfg config.Config) ports.PublisherRegistry {
 	var items []ports.Publisher
 	if cfg.Channels.Filesystem.Enabled {
-		items = append(items, publisherfilesystem.Publisher{OutputDir: cfg.Channels.Filesystem.OutputDir})
+		items = append(items, filesystem.Publisher{OutputDir: cfg.Channels.Filesystem.OutputDir})
 	}
 	if cfg.Channels.Twitter.Enabled {
-		items = append(items, publishertwitter.Publisher{
+		items = append(items, twitter.Publisher{
 			DryRun:         cfg.Channels.Twitter.DryRun,
 			BearerTokenEnv: cfg.Channels.Twitter.BearerTokenEnv,
 			BaseURL:        cfg.Channels.Twitter.BaseURL,
 		})
 	}
-	return publisherregistry.New(items)
+	return publishers.New(items)
 }
 
 func toSchedulingConfig(cfg config.SchedulerConfig) (scheduling.Config, error) {
@@ -420,6 +501,55 @@ func optionStringSlice(options map[string]any, key string) []string {
 	default:
 		return nil
 	}
+}
+
+func promptOverridesMap(cfg config.ArtistPromptOverrideConfig) map[string]any {
+	out := map[string]any{}
+	if len(cfg.ExtraSystemRules) > 0 {
+		out["extra_system_rules"] = append([]string(nil), cfg.ExtraSystemRules...)
+	}
+	if len(cfg.TonalBiases) > 0 {
+		out["tonal_biases"] = append([]string(nil), cfg.TonalBiases...)
+	}
+	if len(cfg.LexicalCues) > 0 {
+		out["lexical_cues"] = append([]string(nil), cfg.LexicalCues...)
+	}
+	if len(cfg.Forbidden) > 0 {
+		out["forbidden"] = append([]string(nil), cfg.Forbidden...)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func presentationOverridesMap(cfg config.ArtistPresentationOverrideConfig) map[string]any {
+	out := map[string]any{}
+	if cfg.Enabled != nil {
+		out["enabled"] = *cfg.Enabled
+	}
+	if cfg.SignatureMode != "" {
+		out["signature_mode"] = cfg.SignatureMode
+	}
+	if cfg.SignatureText != "" {
+		out["signature_text"] = cfg.SignatureText
+	}
+	if cfg.FramingMode != "" {
+		out["framing_mode"] = cfg.FramingMode
+	}
+	if cfg.IntroTemplate != "" {
+		out["intro_template"] = cfg.IntroTemplate
+	}
+	if cfg.OutroTemplate != "" {
+		out["outro_template"] = cfg.OutroTemplate
+	}
+	if len(cfg.AllowedChannels) > 0 {
+		out["allowed_channels"] = append([]string(nil), cfg.AllowedChannels...)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func isTextArtistType(value string) bool {

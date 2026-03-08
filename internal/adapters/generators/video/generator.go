@@ -77,7 +77,13 @@ func (g Generator) GenerateWithState(ctx context.Context, brief episode.Brief, s
 
 func buildPrompt(brief episode.Brief) string {
 	contextBlock := fmt.Sprintf(
-		"Context:\n- World: %s\n- Characters: %s\n- Event: %s\n- Tone: %s\n- Rules: %s\n- WorldData: %v\n- EventData: %v\n- CharacterData: %v",
+		"Context:\n- Artist: %s\n- Artist Mission: %s\n- Artist Tone Biases: %s\n- Artist Lexical Cues: %s\n- Artist Voice: %s\n- Artist Non-Diegetic: %t\n- World: %s\n- Characters: %s\n- Event: %s\n- Tone: %s\n- Rules: %s\n- WorldData: %v\n- EventData: %v\n- CharacterData: %v",
+		brief.Artist.Name,
+		brief.Artist.Mission,
+		strings.Join(brief.Artist.TonalBiases, ", "),
+		strings.Join(brief.Artist.LexicalCues, ", "),
+		formatArtistVoice(brief.Artist.Voice),
+		brief.Artist.NonDiegetic,
 		brief.WorldID,
 		strings.Join(brief.CharacterIDs, ", "),
 		brief.EventID,
@@ -98,11 +104,14 @@ func buildPrompt(brief episode.Brief) string {
 	}
 	additions := promptAdditions(brief)
 	return fmt.Sprintf(
-		"Create a short cinematic scene. World: %s. Characters: %s. Event: %s. Tone: %s. Keep canon rules: %s%s",
+		"Create a short cinematic scene through the editorial lens of %s. World: %s. Characters: %s. Event: %s. Tone: %s. Artist tonal biases: %s. Artist lexical cues: %s. Keep canon rules: %s%s",
+		brief.Artist.Name,
 		brief.WorldID,
 		strings.Join(brief.CharacterIDs, ", "),
 		brief.EventID,
 		brief.Tone,
+		strings.Join(brief.Artist.TonalBiases, ", "),
+		strings.Join(brief.Artist.LexicalCues, ", "),
 		strings.Join(brief.CanonRules, " | "),
 		additions,
 	)
@@ -186,4 +195,17 @@ func imageExtension(path string) string {
 		return "png"
 	}
 	return strings.ToLower(parts[len(parts)-1])
+}
+
+func formatArtistVoice(voice map[string]string) string {
+	if len(voice) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(voice))
+	for _, key := range []string{"register", "cadence", "diction", "stance", "perspective", "intensity"} {
+		if value := strings.TrimSpace(voice[key]); value != "" {
+			parts = append(parts, key+"="+value)
+		}
+	}
+	return strings.Join(parts, ", ")
 }

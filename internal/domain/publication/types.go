@@ -18,6 +18,7 @@ type Item struct {
 	Content       string         `json:"content,omitempty"`
 	Parts         []string       `json:"parts,omitempty"`
 	AssetPath     string         `json:"asset_path,omitempty"`
+	Caption       string         `json:"caption,omitempty"`
 	CreatedAt     time.Time      `json:"created_at"`
 	Metadata      map[string]any `json:"metadata,omitempty"`
 }

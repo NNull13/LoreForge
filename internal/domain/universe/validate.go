@@ -25,6 +25,9 @@ func Validate(u Universe) error {
 	if len(u.Templates) == 0 {
 		return fmt.Errorf("at least one template is required")
 	}
+	if len(u.Artists) == 0 {
+		return fmt.Errorf("at least one artist is required")
+	}
 	for _, event := range u.Events {
 		if worlds, ok := event.Data["compatible_worlds"]; ok {
 			for _, id := range ToStringSlice(worlds) {
@@ -52,6 +55,14 @@ func Validate(u Universe) error {
 	}
 	for _, entity := range allEntities(u) {
 		if err := validateAssets(entity); err != nil {
+			return err
+		}
+	}
+	for _, artist := range u.Artists {
+		if err := validateArtist(artist); err != nil {
+			return err
+		}
+		if err := validateArtistAssets(artist); err != nil {
 			return err
 		}
 	}
@@ -117,7 +128,7 @@ func allEntities(u Universe) []Entity {
 
 func validAssetUsage(v string) bool {
 	switch v {
-	case "character_reference", "style_reference", "environment_reference", "prop_reference", "pose_reference", "continuity_reference", "video_prompt_image":
+	case "character_reference", "style_reference", "environment_reference", "prop_reference", "pose_reference", "continuity_reference", "video_prompt_image", "artist_portrait", "editorial_brand", "signature_mark", "mood_reference":
 		return true
 	default:
 		return false
@@ -131,6 +142,76 @@ func validProviderDriver(v string) bool {
 	default:
 		return false
 	}
+}
+
+func validateArtist(artist Artist) error {
+	if strings.TrimSpace(artist.ID) == "" {
+		return fmt.Errorf("artist missing id")
+	}
+	if strings.TrimSpace(artist.Name) == "" {
+		return fmt.Errorf("artist %s missing name", artist.ID)
+	}
+	if strings.TrimSpace(artist.Role) == "" {
+		return fmt.Errorf("artist %s missing role", artist.ID)
+	}
+	if strings.TrimSpace(artist.Summary) == "" {
+		return fmt.Errorf("artist %s missing summary", artist.ID)
+	}
+	if strings.TrimSpace(artist.Prompting.SystemIdentity) == "" {
+		return fmt.Errorf("artist %s missing prompting.system_identity", artist.ID)
+	}
+	switch artist.Presentation.SignatureMode {
+	case "", "none", "presentation_only", "append", "prepend":
+	default:
+		return fmt.Errorf("artist %s has invalid presentation.signature_mode %s", artist.ID, artist.Presentation.SignatureMode)
+	}
+	switch artist.Presentation.FramingMode {
+	case "", "none", "intro", "outro", "intro_outro":
+	default:
+		return fmt.Errorf("artist %s has invalid presentation.framing_mode %s", artist.ID, artist.Presentation.FramingMode)
+	}
+	for _, channel := range artist.Presentation.AllowedChannels {
+		switch channel {
+		case "filesystem", "twitter":
+		default:
+			return fmt.Errorf("artist %s has invalid allowed channel %s", artist.ID, channel)
+		}
+	}
+	return nil
+}
+
+func validateArtistAssets(artist Artist) error {
+	seen := map[string]bool{}
+	for _, asset := range artist.Assets.Items {
+		if strings.TrimSpace(asset.ID) == "" {
+			return fmt.Errorf("artist %s has asset without id", artist.ID)
+		}
+		if seen[asset.ID] {
+			return fmt.Errorf("artist %s has duplicate asset id %s", artist.ID, asset.ID)
+		}
+		seen[asset.ID] = true
+		if !validAssetUsage(asset.Usage) {
+			return fmt.Errorf("artist %s asset %s has invalid usage %s", artist.ID, asset.ID, asset.Usage)
+		}
+		if asset.Weight < 0 {
+			return fmt.Errorf("artist %s asset %s has negative weight", artist.ID, asset.ID)
+		}
+		if asset.Path == "" {
+			return fmt.Errorf("artist %s asset %s missing path", artist.ID, asset.ID)
+		}
+		if asset.MediaType == "" {
+			return fmt.Errorf("artist %s asset %s missing media type", artist.ID, asset.ID)
+		}
+		if !mediaTypeMatchesExtension(asset.MediaType, asset.Path) {
+			return fmt.Errorf("artist %s asset %s media_type does not match extension", artist.ID, asset.ID)
+		}
+		for driver := range asset.ModelRoles {
+			if !validProviderDriver(driver) {
+				return fmt.Errorf("artist %s asset %s has invalid model role driver %s", artist.ID, asset.ID, driver)
+			}
+		}
+	}
+	return nil
 }
 
 func mediaTypeMatchesExtension(mediaType string, path string) bool {

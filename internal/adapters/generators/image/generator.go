@@ -69,7 +69,12 @@ func (g Generator) Generate(ctx context.Context, brief episode.Brief, _ episode.
 
 func buildPrompt(brief episode.Brief) string {
 	contextBlock := fmt.Sprintf(
-		"Context:\n- World: %s\n- Characters: %s\n- Event: %s\n- Tone: %s\n- Rules: %s\n- WorldData: %v\n- EventData: %v\n- CharacterData: %v",
+		"Context:\n- Artist: %s\n- Artist Mission: %s\n- Artist Tone Biases: %s\n- Artist Lexical Cues: %s\n- Artist Non-Diegetic: %t\n- World: %s\n- Characters: %s\n- Event: %s\n- Tone: %s\n- Rules: %s\n- WorldData: %v\n- EventData: %v\n- CharacterData: %v",
+		brief.Artist.Name,
+		brief.Artist.Mission,
+		strings.Join(brief.Artist.TonalBiases, ", "),
+		strings.Join(brief.Artist.LexicalCues, ", "),
+		brief.Artist.NonDiegetic,
 		brief.WorldID,
 		strings.Join(brief.CharacterIDs, ", "),
 		brief.EventID,
@@ -90,11 +95,14 @@ func buildPrompt(brief episode.Brief) string {
 	}
 	additions := promptAdditions(brief)
 	return fmt.Sprintf(
-		"Create a still image concept. World: %s. Characters: %s. Event: %s. Tone: %s. Keep canon rules: %s%s",
+		"Create a still image concept through the editorial lens of %s. World: %s. Characters: %s. Event: %s. Tone: %s. Artist tonal biases: %s. Artist lexical cues: %s. Keep canon rules: %s%s",
+		brief.Artist.Name,
 		brief.WorldID,
 		strings.Join(brief.CharacterIDs, ", "),
 		brief.EventID,
 		brief.Tone,
+		strings.Join(brief.Artist.TonalBiases, ", "),
+		strings.Join(brief.Artist.LexicalCues, ", "),
 		strings.Join(brief.CanonRules, " | "),
 		additions,
 	)

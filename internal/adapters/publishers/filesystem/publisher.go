@@ -42,7 +42,15 @@ func (p Publisher) Publish(_ context.Context, item publication.Item) (publicatio
 		if err := os.WriteFile(target, content, 0o644); err != nil {
 			return publication.Result{}, err
 		}
-		return publication.Result{Channel: string(p.Name()), Success: true, ExternalID: target, Message: "published asset"}, nil
+		result := publication.Result{Channel: string(p.Name()), Success: true, ExternalID: target, Message: "published asset"}
+		if item.Caption != "" {
+			captionPath := filepath.Join(p.OutputDir, fmt.Sprintf("%s-%s-caption.txt", stamp, item.EpisodeID))
+			if err := os.WriteFile(captionPath, []byte(item.Caption), 0o644); err != nil {
+				return publication.Result{}, err
+			}
+			result.Metadata = map[string]any{"caption_path": captionPath}
+		}
+		return result, nil
 	}
 	target := filepath.Join(p.OutputDir, fmt.Sprintf("%s-%s.txt", stamp, item.EpisodeID))
 	if err := os.WriteFile(target, []byte(item.Content), 0o644); err != nil {

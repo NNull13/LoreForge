@@ -37,6 +37,7 @@ type assetMetadata struct {
 func (r Repository) Load(_ context.Context) (domainuniverse.Universe, error) {
 	u := domainuniverse.Universe{
 		SourcePath: r.Root,
+		Artists:    map[string]domainuniverse.Artist{},
 		Rules:      map[string]domainuniverse.Entity{},
 		Worlds:     map[string]domainuniverse.Entity{},
 		Characters: map[string]domainuniverse.Entity{},
@@ -55,6 +56,9 @@ func (r Repository) Load(_ context.Context) (domainuniverse.Universe, error) {
 	u.Universe = entity
 
 	if err := loadEntityDirectories(filepath.Join(r.Root, "rules"), "rule", u.Rules); err != nil {
+		return u, err
+	}
+	if err := loadArtistDirectories(filepath.Join(r.Root, "artists"), u.Artists); err != nil {
 		return u, err
 	}
 	if err := loadEntityDirectories(filepath.Join(r.Root, "worlds"), "world", u.Worlds); err != nil {
@@ -94,6 +98,24 @@ func loadEntityDirectories(dir, expectedType string, dst map[string]domainuniver
 	return nil
 }
 
+func loadArtistDirectories(dir string, dst map[string]domainuniverse.Artist) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", dir, err)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			return fmt.Errorf("%s only supports artist directories, found file %s", dir, entry.Name())
+		}
+		artist, err := loadArtistDirectory(filepath.Join(dir, entry.Name()), entry.Name())
+		if err != nil {
+			return err
+		}
+		dst[artist.ID] = artist
+	}
+	return nil
+}
+
 func loadEntityDirectory(dir, expectedType, expectedID string) (domainuniverse.Entity, error) {
 	fileBase := expectedID
 	if fileBase == "" {
@@ -119,6 +141,74 @@ func loadEntityDirectory(dir, expectedType, expectedID string) (domainuniverse.E
 	}
 	entity.Assets = assets
 	return entity, nil
+}
+
+func loadArtistDirectory(dir, expectedID string) (domainuniverse.Artist, error) {
+	mdPath := filepath.Join(dir, "artist.md")
+	entity, err := loadEntity(mdPath)
+	if err != nil {
+		return domainuniverse.Artist{}, err
+	}
+	if entity.ID != expectedID {
+		return domainuniverse.Artist{}, fmt.Errorf("%s id mismatch: folder=%s id=%s", dir, expectedID, entity.ID)
+	}
+	if err := ensureOnlyExpectedMarkdown(dir, "artist.md"); err != nil {
+		return domainuniverse.Artist{}, err
+	}
+	assets, err := loadAssets(dir, "artist")
+	if err != nil {
+		return domainuniverse.Artist{}, err
+	}
+	data := entity.Data
+	voice := mapStringAny(data["voice"])
+	mission := mapStringAny(data["mission"])
+	prompting := mapStringAny(data["prompting"])
+	presentation := mapStringAny(data["presentation"])
+	future := mapStringAny(data["future"])
+	artist := domainuniverse.Artist{
+		ID:          entity.ID,
+		Name:        coalesce(asString(data["name"]), entity.DisplayName, entity.ID),
+		Title:       asString(data["title"]),
+		Role:        asString(data["role"]),
+		Summary:     entity.Summary,
+		Body:        entity.Body,
+		NonDiegetic: boolWithDefault(data["non_diegietic"], true),
+		Voice: domainuniverse.ArtistVoice{
+			Register:    asString(voice["register"]),
+			Cadence:     asString(voice["cadence"]),
+			Diction:     asString(voice["diction"]),
+			Stance:      asString(voice["stance"]),
+			Perspective: asString(voice["perspective"]),
+			Intensity:   asString(voice["intensity"]),
+		},
+		Mission: domainuniverse.ArtistMission{
+			Purpose:    asString(mission["purpose"]),
+			Priorities: stringSlice(mission["priorities"]),
+		},
+		Prompting: domainuniverse.ArtistPrompting{
+			SystemIdentity: asString(prompting["system_identity"]),
+			SystemRules:    stringSlice(prompting["system_rules"]),
+			TonalBiases:    stringSlice(prompting["tonal_biases"]),
+			LexicalCues:    stringSlice(prompting["lexical_cues"]),
+			Forbidden:      stringSlice(prompting["forbidden"]),
+		},
+		Presentation: domainuniverse.ArtistPresentation{
+			Enabled:         boolWithDefault(presentation["enabled"], false),
+			SignatureMode:   coalesce(asString(presentation["signature_mode"]), "presentation_only"),
+			SignatureText:   asString(presentation["signature_text"]),
+			FramingMode:     coalesce(asString(presentation["framing_mode"]), "none"),
+			IntroTemplate:   asString(presentation["intro_template"]),
+			OutroTemplate:   asString(presentation["outro_template"]),
+			AllowedChannels: stringSlice(presentation["allowed_channels"]),
+		},
+		Future: domainuniverse.ArtistFuture{
+			MemoryMode: coalesce(asString(future["memory_mode"]), "reserved"),
+		},
+		Assets: assets,
+		Path:   mdPath,
+		Data:   data,
+	}
+	return artist, nil
 }
 
 func ensureOnlyExpectedMarkdown(dir, expected string) error {
@@ -283,6 +373,8 @@ func defaultUsage(entityType string) string {
 		return "character_reference"
 	case "world":
 		return "environment_reference"
+	case "artist":
+		return "style_reference"
 	default:
 		return "continuity_reference"
 	}
@@ -338,6 +430,46 @@ func normalizeYAMLValue(value any) any {
 	default:
 		return value
 	}
+}
+
+func mapStringAny(value any) map[string]any {
+	if value == nil {
+		return nil
+	}
+	if typed, ok := value.(map[string]any); ok {
+		return typed
+	}
+	return nil
+}
+
+func stringSlice(value any) []string {
+	if value == nil {
+		return nil
+	}
+	switch typed := value.(type) {
+	case []string:
+		return append([]string(nil), typed...)
+	case []any:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if s, ok := item.(string); ok && s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func boolWithDefault(value any, fallback bool) bool {
+	if value == nil {
+		return fallback
+	}
+	if b, ok := value.(bool); ok {
+		return b
+	}
+	return fallback
 }
 
 func cloneStringMap(in map[string]string) map[string]string {

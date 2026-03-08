@@ -1,0 +1,13 @@
+assets:
+  - file: portrait.png
+    id: signal-portrait
+    media_type: image
+    usage: artist_portrait
+    description: Editorial portrait reference for The Signal Cartographer.
+    weight: 70
+  - file: style-board.png
+    id: signal-style
+    media_type: image
+    usage: editorial_brand
+    description: Clean geometric style board for visual branding.
+    weight: 75

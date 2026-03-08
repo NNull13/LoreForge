@@ -34,6 +34,25 @@ func TestSelectModes(t *testing.T) {
 				}},
 			},
 		},
+		Artists: map[string]domainuniverse.Artist{
+			"ash-chorister": {
+				ID:      "ash-chorister",
+				Name:    "Ash Chorister",
+				Role:    "chronicler",
+				Summary: "A solemn witness.",
+				Prompting: domainuniverse.ArtistPrompting{
+					SystemIdentity: "You are The Ash Chorister.",
+				},
+				Presentation: domainuniverse.ArtistPresentation{
+					Enabled:       true,
+					SignatureMode: "presentation_only",
+					FramingMode:   "none",
+				},
+				Assets: domainuniverse.AssetSet{Items: []domainuniverse.Asset{
+					{ID: "brand", FileName: "brand.png", Path: "/tmp/brand.png", MediaType: "image", Usage: "editorial_brand", Weight: 70},
+				}},
+			},
+		},
 		Characters: map[string]domainuniverse.Entity{
 			"red-wanderer": {
 				ID:   "red-wanderer",
@@ -52,6 +71,7 @@ func TestSelectModes(t *testing.T) {
 	}
 
 	result := Select(brief, u, ports.GeneratorConfig{
+		ProfileID:          "ash-chorister",
 		ProviderDriver:     "runway_gen4",
 		ReferenceMode:      "continuity_plus_assets",
 		MaxContinuityItems: 1,
@@ -68,6 +88,7 @@ func TestSelectModes(t *testing.T) {
 	}
 
 	result = Select(brief, u, ports.GeneratorConfig{
+		ProfileID:           "ash-chorister",
 		ProviderDriver:      "runway_gen4",
 		ReferenceMode:       "assets_only",
 		MaxAssetReferences:  5,
@@ -81,6 +102,7 @@ func TestSelectModes(t *testing.T) {
 	}
 
 	result = Select(brief, u, ports.GeneratorConfig{
+		ProfileID:      "ash-chorister",
 		ProviderDriver: "runway_gen4",
 		ReferenceMode:  "creative",
 	}, continuity)

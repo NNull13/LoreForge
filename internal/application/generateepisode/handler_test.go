@@ -32,6 +32,7 @@ func TestHandleGeneratesAndPublishesEpisode(t *testing.T) {
 					Generator: fakeGenerator{id: "short-story-artist", outputType: episode.OutputTypeShortStory, content: "Aria walks through the ash garden and hears Kade whisper from the gate while the city keeps their old oath alive."},
 					Config: ports.GeneratorConfig{
 						ID:             "short-story-artist",
+						ProfileID:      "ash-chorister",
 						Type:           episode.OutputTypeShortStory,
 						Style:          "lyrical-canon",
 						PublishTargets: []publication.ChannelName{publication.ChannelFilesystem},
@@ -89,6 +90,7 @@ func TestHandleRetriesInvalidOutput(t *testing.T) {
 					},
 					Config: ports.GeneratorConfig{
 						ID:        "short-story-artist",
+						ProfileID: "ash-chorister",
 						Type:      episode.OutputTypeShortStory,
 						Scheduler: scheduling.Config{Mode: scheduling.ModeFixedInterval, FixedInterval: time.Hour, Timezone: "UTC"},
 					},
@@ -158,6 +160,10 @@ func (f *fakeSchedulerStateRepo) Save(_ context.Context, generatorID string, sta
 	f.savedGeneratorID = generatorID
 	f.state = state
 	return nil
+}
+
+func (f *fakeSchedulerStateRepo) ListGeneratorIDs(_ context.Context) ([]string, error) {
+	return nil, nil
 }
 
 type fakeGeneratorRegistry struct {
@@ -278,6 +284,45 @@ func testUniverse() domainuniverse.Universe {
 		},
 		Worlds: map[string]domainuniverse.Entity{
 			"ember-city": {ID: "ember-city", Type: "world", Data: map[string]any{}},
+		},
+		Artists: map[string]domainuniverse.Artist{
+			"ash-chorister": {
+				ID:          "ash-chorister",
+				Name:        "The Ash Chorister",
+				Title:       "Chronicler of the Ember Archive",
+				Role:        "chronicler",
+				Summary:     "A solemn editorial witness.",
+				Body:        "Records the universe with ritual gravity.",
+				NonDiegetic: true,
+				Voice: domainuniverse.ArtistVoice{
+					Register:    "elevated",
+					Cadence:     "ritual",
+					Diction:     "ceremonial",
+					Stance:      "observant",
+					Perspective: "editorial",
+					Intensity:   "medium",
+				},
+				Mission: domainuniverse.ArtistMission{
+					Purpose:    "Preserve canon through reflective narration.",
+					Priorities: []string{"clarity", "continuity"},
+				},
+				Prompting: domainuniverse.ArtistPrompting{
+					SystemIdentity: "You are The Ash Chorister.",
+					SystemRules:    []string{"Never contradict canon.", "Never appear as an in-world character."},
+					TonalBiases:    []string{"ritual", "restrained"},
+					LexicalCues:    []string{"ember", "oath"},
+					Forbidden:      []string{"internet slang"},
+				},
+				Presentation: domainuniverse.ArtistPresentation{
+					Enabled:         true,
+					SignatureMode:   "presentation_only",
+					SignatureText:   "Filed by The Ash Chorister.",
+					FramingMode:     "intro_outro",
+					IntroTemplate:   "From the Ember Archive:",
+					OutroTemplate:   "Filed by The Ash Chorister.",
+					AllowedChannels: []string{"filesystem"},
+				},
+			},
 		},
 		Characters: map[string]domainuniverse.Entity{
 			"aria": {ID: "aria", Type: "character", Data: map[string]any{"world_affinities": []any{"ember-city"}}},

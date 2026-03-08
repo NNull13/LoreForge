@@ -93,6 +93,7 @@ providers:
 
 artists:
   - id: tweet-short-artist
+    profile_id: signal-cartographer
     type: tweet_short
     enabled: true
     style: sharp-canon
@@ -108,6 +109,7 @@ artists:
       seed: 42
       timezone: America/Chicago
   - id: tweet-thread-artist
+    profile_id: signal-cartographer
     type: tweet_thread
     enabled: true
     style: sharp-canon
@@ -122,6 +124,7 @@ artists:
       seed: 84
       timezone: America/Chicago
   - id: short-story-artist
+    profile_id: ash-chorister
     type: short_story
     enabled: true
     style: lyrical-canon
@@ -137,6 +140,7 @@ artists:
       seed: 126
       timezone: America/Chicago
   - id: long-story-artist
+    profile_id: ash-chorister
     type: long_story
     enabled: true
     style: epic-canon
@@ -151,6 +155,7 @@ artists:
       seed: 168
       timezone: America/Chicago
   - id: poem-artist
+    profile_id: ash-chorister
     type: poem
     enabled: true
     style: elegiac
@@ -166,6 +171,7 @@ artists:
       seed: 210
       timezone: America/Chicago
   - id: song-lyrics-artist
+    profile_id: signal-cartographer
     type: song_lyrics
     enabled: true
     style: anthem
@@ -180,6 +186,7 @@ artists:
       seed: 252
       timezone: America/Chicago
   - id: screenplay-series-artist
+    profile_id: ash-chorister
     type: screenplay_series
     enabled: true
     style: tense-episodic
@@ -194,6 +201,7 @@ artists:
       seed: 294
       timezone: America/Chicago
   - id: video-artist
+    profile_id: signal-cartographer
     type: video
     enabled: true
     style: cinematic-ritual
@@ -208,6 +216,7 @@ artists:
       seed: 142
       timezone: America/Chicago
   - id: image-artist
+    profile_id: signal-cartographer
     type: image
     enabled: true
     style: symbolic-poster

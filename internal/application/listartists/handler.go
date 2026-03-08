@@ -1,0 +1,73 @@
+package listartists
+
+import (
+	"context"
+	"sort"
+	"time"
+
+	"loreforge/internal/application/ports"
+	"loreforge/internal/domain/scheduling"
+	"loreforge/internal/domain/universe"
+)
+
+type Item struct {
+	GeneratorID    string
+	ProfileID      string
+	ArtistName     string
+	Type           string
+	ProviderDriver string
+	ProviderModel  string
+	NextRun        time.Time
+	PublishTargets []string
+}
+
+type Handler struct {
+	Registry           ports.GeneratorRegistry
+	SchedulerStateRepo ports.SchedulerStateRepository
+	Clock              ports.Clock
+	Universe           universe.Universe
+}
+
+func (h Handler) Handle(ctx context.Context) ([]Item, error) {
+	now := h.Clock.Now()
+	items := h.Registry.List()
+	out := make([]Item, 0, len(items))
+	for _, item := range items {
+		next, err := h.nextRunForGenerator(ctx, item, now)
+		if err != nil {
+			return nil, err
+		}
+		name := item.Config.ProfileID
+		if artist, ok := h.Universe.Artists[item.Config.ProfileID]; ok && artist.Name != "" {
+			name = artist.Name
+		}
+		targets := make([]string, 0, len(item.Config.PublishTargets))
+		for _, target := range item.Config.PublishTargets {
+			targets = append(targets, string(target))
+		}
+		out = append(out, Item{
+			GeneratorID:    item.Config.ID,
+			ProfileID:      item.Config.ProfileID,
+			ArtistName:     name,
+			Type:           string(item.Config.Type),
+			ProviderDriver: item.Config.ProviderDriver,
+			ProviderModel:  item.Config.ProviderModel,
+			NextRun:        next,
+			PublishTargets: targets,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].GeneratorID < out[j].GeneratorID })
+	return out, nil
+}
+
+func (h Handler) nextRunForGenerator(ctx context.Context, def ports.RegisteredGenerator, now time.Time) (time.Time, error) {
+	state, err := h.SchedulerStateRepo.Load(ctx, def.Config.ID)
+	if err == nil && !state.NextRunAt.IsZero() {
+		return state.NextRunAt, nil
+	}
+	scheduler, err := scheduling.NewScheduler(def.Config.Scheduler)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return scheduler.NextRun(now)
+}

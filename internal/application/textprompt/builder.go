@@ -26,27 +26,29 @@ func Build(brief episode.Brief, format episode.OutputType, settings textsettings
 func buildSystemPrompt(format episode.OutputType, settings textsettings.ResolvedTextSettings) string {
 	switch format {
 	case episode.OutputTypeTweetShort:
-		return "You write one concise tweet in canon voice. Return valid JSON only."
+		return "You write one concise tweet in canon voice. Universe canon has priority over artistic style. Return valid JSON only."
 	case episode.OutputTypeTweetThread:
-		return fmt.Sprintf("You write a tweet thread with %d to %d tweets. Each tweet must stand alone and flow sequentially. Return valid JSON only.", settings.MinParts, settings.MaxParts)
+		return fmt.Sprintf("You write a tweet thread with %d to %d tweets. Each tweet must stand alone and flow sequentially. Universe canon has priority over artistic style. Return valid JSON only.", settings.MinParts, settings.MaxParts)
 	case episode.OutputTypeShortStory:
-		return "You write a short story scene with setup, escalation, and consequence. Return valid JSON only."
+		return "You write a short story scene with setup, escalation, and consequence. Universe canon has priority over artistic style. Return valid JSON only."
 	case episode.OutputTypeLongStory:
-		return "You write a long-form story with sustained continuity and strong scene progression. Return valid JSON only."
+		return "You write a long-form story with sustained continuity and strong scene progression. Universe canon has priority over artistic style. Return valid JSON only."
 	case episode.OutputTypePoem:
-		return "You write a poem with vivid imagery and line breaks. Return valid JSON only."
+		return "You write a poem with vivid imagery and line breaks. Universe canon has priority over artistic style. Return valid JSON only."
 	case episode.OutputTypeSongLyrics:
-		return "You write song lyrics with Verse and Chorus sections. Return valid JSON only."
+		return "You write song lyrics with Verse and Chorus sections. Universe canon has priority over artistic style. Return valid JSON only."
 	case episode.OutputTypeScreenplaySeries:
-		return "You write a series screenplay excerpt using scene headings, action, and dialogue. Return valid JSON only."
+		return "You write a series screenplay excerpt using scene headings, action, and dialogue. Universe canon has priority over artistic style. Return valid JSON only."
 	default:
-		return "You write canon-consistent creative text. Return valid JSON only."
+		return "You write canon-consistent creative text. Universe canon has priority over artistic style. Return valid JSON only."
 	}
 }
 
 func buildUserPrompt(brief episode.Brief, format episode.OutputType, settings textsettings.ResolvedTextSettings) string {
 	sections := []string{
 		fmt.Sprintf("Format: %s", format),
+		fmt.Sprintf("Artist Identity: %s", artistIdentity(brief.Artist)),
+		fmt.Sprintf("Artist Mission: %s", brief.Artist.Mission),
 		fmt.Sprintf("World: %s", brief.WorldID),
 		fmt.Sprintf("Characters: %s", strings.Join(brief.CharacterIDs, ", ")),
 		fmt.Sprintf("Event: %s", brief.EventID),
@@ -54,6 +56,18 @@ func buildUserPrompt(brief episode.Brief, format episode.OutputType, settings te
 		fmt.Sprintf("Objective: %s", brief.Objective),
 		fmt.Sprintf("Rules: %s", strings.Join(brief.CanonRules, " | ")),
 		fmt.Sprintf("Word bounds: %d-%d", settings.MinWords, settings.MaxWords),
+	}
+	if voice := artistVoice(brief.Artist); voice != "" {
+		sections = append(sections, "Artist Voice:\n"+voice)
+	}
+	if len(brief.Artist.PromptingRules) > 0 {
+		sections = append(sections, "Artist Prompting Rules:\n- "+strings.Join(brief.Artist.PromptingRules, "\n- "))
+	}
+	if brief.Artist.NonDiegetic {
+		sections = append(sections, "Artist Non-Diegetic Constraint:\nThe artist is an editorial lens, not a character in the story, and must never appear diegetically unless explicitly instructed.")
+	}
+	if policy := artistSignaturePolicy(brief.Artist); policy != "" {
+		sections = append(sections, "Artist Signature Policy:\n"+policy)
 	}
 	if settings.MinParts > 0 || settings.MaxParts > 0 {
 		sections = append(sections, fmt.Sprintf("Part bounds: %d-%d", settings.MinParts, settings.MaxParts))
@@ -74,6 +88,37 @@ func buildUserPrompt(brief episode.Brief, format episode.OutputType, settings te
 		sections = append(sections, "Visual Canon References:\n"+refs)
 	}
 	return strings.Join(sections, "\n\n")
+}
+
+func artistIdentity(artist episode.ArtistLens) string {
+	if artist.Title != "" {
+		return fmt.Sprintf("%s (%s)", artist.Name, artist.Title)
+	}
+	if artist.Name != "" {
+		return artist.Name
+	}
+	return artist.ID
+}
+
+func artistVoice(artist episode.ArtistLens) string {
+	if len(artist.Voice) == 0 {
+		return ""
+	}
+	order := []string{"register", "cadence", "diction", "stance", "perspective", "intensity"}
+	lines := make([]string, 0, len(order))
+	for _, key := range order {
+		if value := strings.TrimSpace(artist.Voice[key]); value != "" {
+			lines = append(lines, fmt.Sprintf("- %s: %s", key, value))
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func artistSignaturePolicy(artist episode.ArtistLens) string {
+	if !artist.Presentation.Enabled {
+		return "No visible artist framing should be embedded in the body unless channel presentation applies later."
+	}
+	return fmt.Sprintf("signature_mode=%s framing_mode=%s signature_text=%s", artist.Presentation.SignatureMode, artist.Presentation.FramingMode, artist.Presentation.SignatureText)
 }
 
 func schemaFor(format episode.OutputType, settings textsettings.ResolvedTextSettings) map[string]any {

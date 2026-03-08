@@ -39,6 +39,25 @@ Character body.`)
     weight: 100
 `)
 	writeFile(t, filepath.Join(root, "characters", "panda", "panda.png"), "placeholder")
+	writeEntityFile(t, filepath.Join(root, "artists", "ash-chorister", "artist.md"), `---
+id: ash-chorister
+name: Ash Chorister
+role: chronicler
+summary: A solemn witness.
+non_diegietic: true
+voice:
+  register: elevated
+mission:
+  purpose: Preserve canon.
+prompting:
+  system_identity: You are The Ash Chorister.
+presentation:
+  enabled: true
+  signature_mode: presentation_only
+  framing_mode: none
+---
+Artist body.`)
+	writeFile(t, filepath.Join(root, "artists", "ash-chorister", "signature.png"), "placeholder")
 	writeEntityFile(t, filepath.Join(root, "worlds", "bamboo-forest", "bamboo-forest.md"), `---
 id: bamboo-forest
 type: world
@@ -73,6 +92,9 @@ Rule body.`)
 	}
 	if len(u.Universe.Assets.Items) != 1 {
 		t.Fatalf("unexpected root assets: %d", len(u.Universe.Assets.Items))
+	}
+	if len(u.Artists) != 1 {
+		t.Fatalf("unexpected artist count: %d", len(u.Artists))
 	}
 	if len(u.Characters["panda"].Assets.Items) != 1 {
 		t.Fatalf("unexpected character assets: %d", len(u.Characters["panda"].Assets.Items))
@@ -117,6 +139,22 @@ id: global-rules
 type: rule
 ---
 Rule body.`)
+	writeEntityFile(t, filepath.Join(root, "artists", "ash-chorister", "artist.md"), `---
+id: ash-chorister
+name: Ash Chorister
+role: chronicler
+summary: A solemn witness.
+non_diegietic: true
+mission:
+  purpose: Preserve canon.
+prompting:
+  system_identity: You are The Ash Chorister.
+presentation:
+  enabled: true
+  signature_mode: presentation_only
+  framing_mode: none
+---
+Artist body.`)
 
 	repo := Repository{Root: root}
 	if _, err := repo.Load(context.Background()); err == nil {

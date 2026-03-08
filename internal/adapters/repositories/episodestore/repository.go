@@ -185,6 +185,16 @@ func (r *Repository) writeSnapshot(path string, record episode.Record) error {
 			return err
 		}
 	}
+	if len(record.Presentation) > 0 {
+		if err := writeJSON(filepath.Join(path, "presentation.json"), record.Presentation); err != nil {
+			return err
+		}
+	}
+	if len(record.ArtistSnapshot) > 0 {
+		if err := writeJSON(filepath.Join(path, "artist_snapshot.json"), record.ArtistSnapshot); err != nil {
+			return err
+		}
+	}
 	if record.OutputText != "" {
 		if err := os.WriteFile(filepath.Join(path, "output.txt"), []byte(record.OutputText), 0o644); err != nil {
 			return err

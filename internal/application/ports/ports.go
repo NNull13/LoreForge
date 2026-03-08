@@ -17,23 +17,26 @@ type Generator interface {
 }
 
 type GeneratorConfig struct {
-	ID                  string
-	Type                episode.OutputType
-	Style               string
-	PublishTargets      []publication.ChannelName
-	Scheduler           scheduling.Config
-	Seed                int64
-	ProviderDriver      string
-	ProviderModel       string
-	ProviderConfig      map[string]any
-	Options             map[string]any
-	ReferenceMode       string
-	ContinuityScope     string
-	MaxContinuityItems  int
-	MaxAssetReferences  int
-	IncludeTextMemories bool
-	AssetUsageAllowlist []string
-	TextConstraints     *episode.TextConstraints
+	ID                    string
+	ProfileID             string
+	Type                  episode.OutputType
+	Style                 string
+	PublishTargets        []publication.ChannelName
+	Scheduler             scheduling.Config
+	Seed                  int64
+	ProviderDriver        string
+	ProviderModel         string
+	ProviderConfig        map[string]any
+	Options               map[string]any
+	ReferenceMode         string
+	ContinuityScope       string
+	MaxContinuityItems    int
+	MaxAssetReferences    int
+	IncludeTextMemories   bool
+	AssetUsageAllowlist   []string
+	TextConstraints       *episode.TextConstraints
+	PromptOverrides       map[string]any
+	PresentationOverrides map[string]any
 }
 
 type RegisteredGenerator struct {
@@ -62,6 +65,7 @@ type EpisodeRepository interface {
 type SchedulerStateRepository interface {
 	Load(ctx context.Context, generatorID string) (scheduling.State, error)
 	Save(ctx context.Context, generatorID string, state scheduling.State) error
+	ListGeneratorIDs(ctx context.Context) ([]string, error)
 }
 
 type Publisher interface {

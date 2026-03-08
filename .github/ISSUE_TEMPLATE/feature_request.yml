@@ -1,0 +1,44 @@
+name: Feature request
+description: Propose an improvement or new capability
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the problem and the expected value. Keep scope as concrete as possible.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem statement
+      placeholder: What pain point are you trying to solve?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      placeholder: What should be built/changed?
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      placeholder: What alternatives did you evaluate?
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact
+      placeholder: Who benefits and how?
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution
+      options:
+        - label: I can help implement this.
+        - label: I can help with design/spec review.

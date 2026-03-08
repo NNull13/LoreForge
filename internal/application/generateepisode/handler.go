@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"loreforge/internal/application/artistpresentation"
 	"loreforge/internal/application/ports"
 	"loreforge/internal/application/referenceselector"
 	"loreforge/internal/domain/episode"
@@ -65,7 +66,12 @@ func (h Handler) Handle(ctx context.Context, req Request) (Result, error) {
 	if strings.TrimSpace(brief.TemplateID) == "" {
 		return Result{}, fmt.Errorf("%w: no template for output type %s", episode.ErrUniverseInvalid, def.Config.Type)
 	}
+	artistProfile, ok := u.Artists[def.Config.ProfileID]
+	if !ok {
+		return Result{}, fmt.Errorf("%w: unknown artist profile %s", episode.ErrUniverseInvalid, def.Config.ProfileID)
+	}
 	brief = enrichBriefWithUniverseData(brief, u)
+	brief.Artist = buildArtistLens(artistProfile, def.Config)
 	brief.TextConstraints = def.Config.TextConstraints
 	continuityRefs, err := h.EpisodeRepo.RecentReferencesByGenerator(ctx, def.Config.ID, def.Config.MaxContinuityItems)
 	if err != nil {
@@ -74,6 +80,7 @@ func (h Handler) Handle(ctx context.Context, req Request) (Result, error) {
 	selected := referenceselector.Select(brief, u, def.Config, continuityRefs)
 	brief.VisualReferences = selected.VisualReferences
 	brief.ContinuityReferences = selected.ContinuityReferences
+	brief.Artist.VisualRefs = artistVisualReferences(brief.VisualReferences, brief.Artist.ID)
 	if !def.Config.IncludeTextMemories {
 		brief.ContinuityReferences = nil
 	}
@@ -114,24 +121,28 @@ func (h Handler) Handle(ctx context.Context, req Request) (Result, error) {
 	episodeID := h.IDGenerator.NewEpisodeID()
 	record := episode.Record{
 		Manifest: episode.Manifest{
-			EpisodeID:       episodeID,
-			CreatedAt:       now,
-			Agent:           def.Config.ID,
-			ArtistID:        def.Config.ID,
-			ArtistType:      string(def.Config.Type),
-			ArtistStyle:     def.Config.Style,
-			OutputType:      string(brief.EpisodeType),
-			UniverseVersion: universeVersion,
-			WorldIDs:        []string{brief.WorldID},
-			CharacterIDs:    brief.CharacterIDs,
-			EventID:         brief.EventID,
-			TemplateID:      brief.TemplateID,
-			PromptInput:     brief.Objective,
-			PromptFinal:     out.Prompt,
-			Provider:        out.Provider,
-			Model:           out.Model,
-			Seed:            def.Config.Seed,
-			RetryCount:      retries,
+			EpisodeID:              episodeID,
+			CreatedAt:              now,
+			Agent:                  def.Config.ID,
+			ArtistID:               def.Config.ID,
+			ArtistType:             string(def.Config.Type),
+			ArtistStyle:            def.Config.Style,
+			ArtistProfileID:        brief.Artist.ID,
+			ArtistName:             brief.Artist.Name,
+			ArtistRole:             brief.Artist.Role,
+			ArtistPresentationMode: brief.Artist.Presentation.SignatureMode + ":" + brief.Artist.Presentation.FramingMode,
+			OutputType:             string(brief.EpisodeType),
+			UniverseVersion:        universeVersion,
+			WorldIDs:               []string{brief.WorldID},
+			CharacterIDs:           brief.CharacterIDs,
+			EventID:                brief.EventID,
+			TemplateID:             brief.TemplateID,
+			PromptInput:            brief.Objective,
+			PromptFinal:            out.Prompt,
+			Provider:               out.Provider,
+			Model:                  out.Model,
+			Seed:                   def.Config.Seed,
+			RetryCount:             retries,
 			Scores: map[string]any{
 				"length_ok":         len(out.Content) >= 50 || out.AssetPath != "",
 				"contains_entities": episode.ContainsEntities(out.Content, brief.CharacterIDs),
@@ -149,6 +160,10 @@ func (h Handler) Handle(ctx context.Context, req Request) (Result, error) {
 			"generator_targets":              def.Config.PublishTargets,
 			"artist_targets":                 def.Config.PublishTargets,
 			"provider_driver":                def.Config.ProviderDriver,
+			"artist_profile":                 brief.Artist,
+			"artist_prompt_snapshot":         artistPromptSnapshot(brief.Artist),
+			"artist_visual_references":       brief.Artist.VisualRefs,
+			"artist_non_diegietic":           brief.Artist.NonDiegetic,
 			"reference_mode":                 def.Config.ReferenceMode,
 			"selected_visual_references":     brief.VisualReferences,
 			"selected_continuity_references": brief.ContinuityReferences,
@@ -159,8 +174,10 @@ func (h Handler) Handle(ctx context.Context, req Request) (Result, error) {
 		OutputText:       out.Content,
 		OutputParts:      out.OutputParts(),
 		OutputAssetPath:  out.AssetPath,
+		ArtistSnapshot:   artistSnapshot(artistProfile),
 	}
-	record.Publish = h.publish(ctx, record, def.Config.PublishTargets)
+	record.Publish, record.Presentation = h.publish(ctx, record, brief.Artist, def.Config.PublishTargets)
+	record.Context["artist_presentation_applied"] = record.Presentation
 	if bootstrapImage.AssetPath != "" {
 		record.Context["visual_pipeline"] = map[string]any{
 			"bootstrap_image_asset_path": bootstrapImage.AssetPath,
@@ -301,15 +318,17 @@ func publishedChannels(results map[string]any) []string {
 	return out
 }
 
-func (h Handler) publish(ctx context.Context, record episode.Record, targets []publication.ChannelName) map[string]any {
+func (h Handler) publish(ctx context.Context, record episode.Record, artist episode.ArtistLens, targets []publication.ChannelName) (map[string]any, map[string]any) {
 	results := make(map[string]any, len(targets))
+	presentation := make(map[string]any, len(targets))
 	for _, target := range targets {
 		publisher, ok := h.PublisherRegistry.Get(target)
 		if !ok {
 			results[string(target)] = map[string]any{"success": false, "error": "channel not configured"}
+			presentation[string(target)] = artistpresentation.Applied{Channel: string(target)}
 			continue
 		}
-		res, err := publisher.Publish(ctx, publication.Item{
+		item, applied := artistpresentation.Compose(publication.Item{
 			EpisodeID:     record.Manifest.EpisodeID,
 			GeneratorID:   record.Manifest.ArtistID,
 			GeneratorType: record.Manifest.ArtistType,
@@ -319,14 +338,16 @@ func (h Handler) publish(ctx context.Context, record episode.Record, targets []p
 			Parts:         append([]string(nil), record.OutputParts...),
 			AssetPath:     record.OutputAssetPath,
 			CreatedAt:     record.Manifest.CreatedAt,
-		})
+		}, artist, target)
+		res, err := publisher.Publish(ctx, item)
+		presentation[string(target)] = applied
 		if err != nil {
 			results[string(target)] = map[string]any{"success": false, "error": err.Error()}
 			continue
 		}
 		results[string(target)] = res
 	}
-	return results
+	return results, presentation
 }
 
 func pickTemplateForType(u domainuniverse.Universe, outputType, fallback string) string {
@@ -357,6 +378,134 @@ func enrichBriefWithUniverseData(brief episode.Brief, u domainuniverse.Universe)
 		}
 	}
 	return brief
+}
+
+func buildArtistLens(profile domainuniverse.Artist, cfg ports.GeneratorConfig) episode.ArtistLens {
+	lens := episode.ArtistLens{
+		ID:          profile.ID,
+		Name:        profile.Name,
+		Title:       profile.Title,
+		Role:        profile.Role,
+		Summary:     profile.Summary,
+		Body:        profile.Body,
+		NonDiegetic: profile.NonDiegetic,
+		Voice: map[string]string{
+			"register":    profile.Voice.Register,
+			"cadence":     profile.Voice.Cadence,
+			"diction":     profile.Voice.Diction,
+			"stance":      profile.Voice.Stance,
+			"perspective": profile.Voice.Perspective,
+			"intensity":   profile.Voice.Intensity,
+		},
+		Mission:        profile.Mission.Purpose,
+		PromptingRules: append([]string(nil), profile.Prompting.SystemRules...),
+		TonalBiases:    append([]string(nil), profile.Prompting.TonalBiases...),
+		LexicalCues:    append([]string(nil), profile.Prompting.LexicalCues...),
+		Forbidden:      append([]string(nil), profile.Prompting.Forbidden...),
+		Presentation: episode.ArtistPresentationSnapshot{
+			Enabled:         profile.Presentation.Enabled,
+			SignatureMode:   profile.Presentation.SignatureMode,
+			SignatureText:   profile.Presentation.SignatureText,
+			FramingMode:     profile.Presentation.FramingMode,
+			IntroTemplate:   profile.Presentation.IntroTemplate,
+			OutroTemplate:   profile.Presentation.OutroTemplate,
+			AllowedChannels: append([]string(nil), profile.Presentation.AllowedChannels...),
+		},
+	}
+	applyArtistOverrides(&lens, cfg)
+	return lens
+}
+
+func applyArtistOverrides(lens *episode.ArtistLens, cfg ports.GeneratorConfig) {
+	if len(cfg.PromptOverrides) > 0 {
+		lens.PromptingRules = append(lens.PromptingRules, toStringSlice(cfg.PromptOverrides["extra_system_rules"])...)
+		lens.TonalBiases = append(lens.TonalBiases, toStringSlice(cfg.PromptOverrides["tonal_biases"])...)
+		lens.LexicalCues = append(lens.LexicalCues, toStringSlice(cfg.PromptOverrides["lexical_cues"])...)
+		lens.Forbidden = append(lens.Forbidden, toStringSlice(cfg.PromptOverrides["forbidden"])...)
+	}
+	if len(cfg.PresentationOverrides) > 0 {
+		if enabled, ok := cfg.PresentationOverrides["enabled"].(bool); ok {
+			lens.Presentation.Enabled = enabled
+		}
+		if value, ok := cfg.PresentationOverrides["signature_mode"].(string); ok && value != "" {
+			lens.Presentation.SignatureMode = value
+		}
+		if value, ok := cfg.PresentationOverrides["signature_text"].(string); ok && value != "" {
+			lens.Presentation.SignatureText = value
+		}
+		if value, ok := cfg.PresentationOverrides["framing_mode"].(string); ok && value != "" {
+			lens.Presentation.FramingMode = value
+		}
+		if value, ok := cfg.PresentationOverrides["intro_template"].(string); ok && value != "" {
+			lens.Presentation.IntroTemplate = value
+		}
+		if value, ok := cfg.PresentationOverrides["outro_template"].(string); ok && value != "" {
+			lens.Presentation.OutroTemplate = value
+		}
+		if value := toStringSlice(cfg.PresentationOverrides["allowed_channels"]); len(value) > 0 {
+			lens.Presentation.AllowedChannels = value
+		}
+	}
+	lens.NonDiegetic = true
+}
+
+func artistVisualReferences(refs []episode.VisualReference, artistID string) []episode.VisualReference {
+	out := make([]episode.VisualReference, 0)
+	for _, ref := range refs {
+		if ref.EntityType == "artist" && ref.EntityID == artistID {
+			out = append(out, ref)
+		}
+	}
+	return out
+}
+
+func artistSnapshot(artist domainuniverse.Artist) map[string]any {
+	return map[string]any{
+		"id":            artist.ID,
+		"name":          artist.Name,
+		"title":         artist.Title,
+		"role":          artist.Role,
+		"summary":       artist.Summary,
+		"body":          artist.Body,
+		"non_diegietic": artist.NonDiegetic,
+		"voice":         artist.Voice,
+		"mission":       artist.Mission,
+		"prompting":     artist.Prompting,
+		"presentation":  artist.Presentation,
+		"future":        artist.Future,
+		"assets":        artist.Assets,
+	}
+}
+
+func artistPromptSnapshot(artist episode.ArtistLens) map[string]any {
+	return map[string]any{
+		"id":              artist.ID,
+		"name":            artist.Name,
+		"mission":         artist.Mission,
+		"voice":           artist.Voice,
+		"prompting_rules": append([]string(nil), artist.PromptingRules...),
+		"tonal_biases":    append([]string(nil), artist.TonalBiases...),
+		"lexical_cues":    append([]string(nil), artist.LexicalCues...),
+		"forbidden":       append([]string(nil), artist.Forbidden...),
+		"presentation":    artist.Presentation,
+	}
+}
+
+func toStringSlice(value any) []string {
+	switch typed := value.(type) {
+	case []string:
+		return append([]string(nil), typed...)
+	case []any:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if s, ok := item.(string); ok && s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
 }
 
 func cloneAnyMap(in map[string]any) map[string]any {
