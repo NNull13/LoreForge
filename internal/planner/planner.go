@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"loreforge/internal/universe"
-	"loreforge/pkg/contracts"
+	"loreforge/internal/domain/episode"
+	"loreforge/internal/domain/universe"
 )
 
 type HistoryCombo struct {
@@ -41,23 +41,23 @@ func New(cfg Config) *Planner {
 	return &Planner{rng: rand.New(rand.NewSource(seed)), cfg: cfg}
 }
 
-func (p *Planner) BuildBrief(u universe.Universe, recent []HistoryCombo) (contracts.EpisodeBrief, error) {
+func (p *Planner) BuildBrief(u universe.Universe, recent []HistoryCombo) (episode.Brief, error) {
 	episodeType, err := weightedPick(p.rng, p.cfg.Weights)
 	if err != nil {
-		return contracts.EpisodeBrief{}, err
+		return episode.Brief{}, err
 	}
 	worldID := pickKey(p.rng, u.Worlds)
 	eventID, err := pickOne(p.rng, compatibleEventIDs(u, worldID))
 	if err != nil {
-		return contracts.EpisodeBrief{}, err
+		return episode.Brief{}, err
 	}
 	templateID, err := p.pickTemplate(u, episodeType)
 	if err != nil {
-		return contracts.EpisodeBrief{}, err
+		return episode.Brief{}, err
 	}
 	charIDs, err := p.pickCharactersFromIDs(compatibleCharacterIDs(u, worldID), 1+p.rng.Intn(2))
 	if err != nil {
-		return contracts.EpisodeBrief{}, err
+		return episode.Brief{}, err
 	}
 
 	candidate := comboKey(worldID, charIDs, eventID)
@@ -72,17 +72,17 @@ func (p *Planner) BuildBrief(u universe.Universe, recent []HistoryCombo) (contra
 		worldID = pickKey(p.rng, u.Worlds)
 		eventID, err = pickOne(p.rng, compatibleEventIDs(u, worldID))
 		if err != nil {
-			return contracts.EpisodeBrief{}, err
+			return episode.Brief{}, err
 		}
 		charIDs, err = p.pickCharactersFromIDs(compatibleCharacterIDs(u, worldID), 1+p.rng.Intn(2))
 		if err != nil {
-			return contracts.EpisodeBrief{}, err
+			return episode.Brief{}, err
 		}
 		candidate = comboKey(worldID, charIDs, eventID)
 	}
 
-	brief := contracts.EpisodeBrief{
-		EpisodeType:  episodeType,
+	brief := episode.Brief{
+		EpisodeType:  episode.OutputType(episodeType),
 		WorldID:      worldID,
 		CharacterIDs: charIDs,
 		EventID:      eventID,

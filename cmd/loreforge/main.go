@@ -9,10 +9,38 @@ import (
 	"strings"
 	"time"
 
+	generatorimage "loreforge/internal/adapters/generators/image"
+	generatorregistry "loreforge/internal/adapters/generators/registry"
+	generatortext "loreforge/internal/adapters/generators/text"
+	generatorvideo "loreforge/internal/adapters/generators/video"
+	providerfactory "loreforge/internal/adapters/providers/factory"
+	publisherfilesystem "loreforge/internal/adapters/publishers/filesystem"
+	publisherregistry "loreforge/internal/adapters/publishers/registry"
+	publishertwitter "loreforge/internal/adapters/publishers/twitter"
+	"loreforge/internal/adapters/repositories/episodestore"
+	"loreforge/internal/adapters/repositories/schedulerstatefs"
+	"loreforge/internal/adapters/repositories/universefs"
+	"loreforge/internal/application/generateepisode"
+	"loreforge/internal/application/nextrun"
+	"loreforge/internal/application/ports"
+	"loreforge/internal/application/showepisode"
+	"loreforge/internal/application/validateuniverse"
 	"loreforge/internal/config"
-	"loreforge/internal/core"
-	"loreforge/internal/universe"
+	"loreforge/internal/domain/episode"
+	"loreforge/internal/domain/publication"
+	"loreforge/internal/domain/scheduling"
+	"loreforge/internal/planner"
+	"loreforge/internal/platform/hashutil"
+	"loreforge/internal/platform/idgen"
+	"loreforge/internal/platform/timeutil"
 )
+
+type app struct {
+	generate generateepisode.Handler
+	validate validateuniverse.Handler
+	show     showepisode.Handler
+	nextRun  nextrun.Handler
+}
 
 func main() {
 	if len(os.Args) < 2 {
@@ -40,24 +68,27 @@ func main() {
 
 func runCmd(args []string) {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
-	configPath := fs.String("config", "./universes/config/config.yaml", "path to config yaml")
+	configPath := fs.String("config", "./universes/config.yaml", "path to config yaml")
 	_ = fs.Parse(args)
 	cfg := loadConfigOrExit(*configPath)
-	eng, err := core.New(cfg)
+	app, err := buildApp(cfg)
 	must(err)
-	rec, err := eng.GenerateOnce(context.Background(), "")
+	res, err := app.generate.Handle(context.Background(), generateepisode.Request{
+		MaxRetries:    cfg.Generation.MaxRetries,
+		RecencyWindow: cfg.Generation.RecencyWindow,
+	})
 	must(err)
-	fmt.Printf("run complete: episode=%s state=%s type=%s\n", rec.Manifest.EpisodeID, rec.Manifest.State, rec.Manifest.OutputType)
+	fmt.Printf("run complete: episode=%s state=%s type=%s\n", res.Record.Manifest.EpisodeID, res.Record.Manifest.State, res.Record.Manifest.OutputType)
 }
 
 func validateCmd(args []string) {
 	fs := flag.NewFlagSet("validate", flag.ExitOnError)
-	configPath := fs.String("config", "./universes/config/config.yaml", "path to config yaml")
+	configPath := fs.String("config", "./universes/config.yaml", "path to config yaml")
 	_ = fs.Parse(args)
 	cfg := loadConfigOrExit(*configPath)
-	eng, err := core.New(cfg)
+	app, err := buildApp(cfg)
 	must(err)
-	must(eng.ValidateUniverse())
+	must(app.validate.Handle(context.Background()))
 	fmt.Println("validate ok")
 }
 
@@ -69,18 +100,22 @@ func generateCmd(args []string) {
 	fs := flag.NewFlagSet("generate once", flag.ExitOnError)
 	artist := fs.String("artist", "", "artist id or type")
 	agent := fs.String("agent", "", "agent type (legacy alias): text|video|image")
-	configPath := fs.String("config", "./universes/config/config.yaml", "path to config yaml")
+	configPath := fs.String("config", "./universes/config.yaml", "path to config yaml")
 	_ = fs.Parse(args[1:])
 	cfg := loadConfigOrExit(*configPath)
-	eng, err := core.New(cfg)
+	app, err := buildApp(cfg)
 	must(err)
 	selected := *artist
 	if selected == "" {
 		selected = *agent
 	}
-	rec, err := eng.GenerateOnce(context.Background(), selected)
+	res, err := app.generate.Handle(context.Background(), generateepisode.Request{
+		Generator:     selected,
+		MaxRetries:    cfg.Generation.MaxRetries,
+		RecencyWindow: cfg.Generation.RecencyWindow,
+	})
 	must(err)
-	fmt.Printf("generated: episode=%s type=%s artist=%s\n", rec.Manifest.EpisodeID, rec.Manifest.OutputType, rec.Manifest.ArtistID)
+	fmt.Printf("generated: episode=%s type=%s artist=%s\n", res.Record.Manifest.EpisodeID, res.Record.Manifest.OutputType, res.Record.Manifest.ArtistID)
 }
 
 func episodeCmd(args []string) {
@@ -90,15 +125,15 @@ func episodeCmd(args []string) {
 	}
 	epID := args[1]
 	fs := flag.NewFlagSet("episode show", flag.ExitOnError)
-	configPath := fs.String("config", "./universes/config/config.yaml", "path to config yaml")
+	configPath := fs.String("config", "./universes/config.yaml", "path to config yaml")
 	_ = fs.Parse(args[2:])
 	cfg := loadConfigOrExit(*configPath)
-	eng, err := core.New(cfg)
+	app, err := buildApp(cfg)
 	must(err)
-	path, manifest, err := eng.ShowEpisode(epID)
+	res, err := app.show.Handle(context.Background(), showepisode.Request{EpisodeID: epID})
 	must(err)
-	b, _ := json.MarshalIndent(manifest, "", "  ")
-	fmt.Printf("episode path: %s\n%s\n", path, string(b))
+	b, _ := json.MarshalIndent(res.Manifest, "", "  ")
+	fmt.Printf("episode path: %s\n%s\n", res.Path, string(b))
 }
 
 func universeCmd(args []string) {
@@ -107,7 +142,8 @@ func universeCmd(args []string) {
 		os.Exit(1)
 	}
 	path := args[1]
-	_, err := universe.Load(path)
+	repo := universefs.Repository{Root: path}
+	_, err := repo.Load(context.Background())
 	must(err)
 	fmt.Println("universe lint ok")
 }
@@ -119,19 +155,18 @@ func schedulerCmd(args []string) {
 	}
 	fs := flag.NewFlagSet("scheduler next-run", flag.ExitOnError)
 	artist := fs.String("artist", "", "artist id")
-	configPath := fs.String("config", "./universes/config/config.yaml", "path to config yaml")
+	configPath := fs.String("config", "./universes/config.yaml", "path to config yaml")
 	_ = fs.Parse(args[1:])
 	cfg := loadConfigOrExit(*configPath)
-	eng, err := core.New(cfg)
+	app, err := buildApp(cfg)
 	must(err)
-	now := time.Now()
 	if *artist != "" {
-		next, err := eng.NextRunForArtist(*artist, now)
+		next, err := app.nextRun.Handle(context.Background(), nextrun.Request{GeneratorID: *artist})
 		must(err)
 		fmt.Printf("next run (%s): %s\n", *artist, next.Format(time.RFC3339))
 		return
 	}
-	next, err := eng.NextRun(now)
+	next, err := app.nextRun.Handle(context.Background(), nextrun.Request{})
 	must(err)
 	fmt.Printf("next run (any artist): %s\n", next.Format(time.RFC3339))
 }
@@ -161,4 +196,140 @@ func must(err error) {
 	}
 	fmt.Fprintln(os.Stderr, "error:", err)
 	os.Exit(1)
+}
+
+func buildApp(cfg config.Config) (app, error) {
+	generators, err := buildGeneratorRegistry(cfg)
+	if err != nil {
+		return app{}, err
+	}
+	publishers := buildPublisherRegistry(cfg)
+	universeRepo := universefs.Repository{Root: cfg.Universe.Path}
+	episodeRepo := episodestore.New(cfg.Memory.DSN)
+	schedulerRepo := schedulerstatefs.Repository{BaseDir: episodestore.BaseDirFromDSN(cfg.Memory.DSN)}
+	plannerSvc := planner.New(planner.Config{
+		Weights:        cfg.Generation.Weights,
+		RecencyWindow:  cfg.Generation.RecencyWindow,
+		Seed:           cfg.Scheduler.Seed,
+		ProductionMode: isProductionEnv(cfg.App.Env),
+	})
+	clock := timeutil.RealClock{}
+	return app{
+		generate: generateepisode.Handler{
+			UniverseRepo:       universeRepo,
+			EpisodeRepo:        episodeRepo,
+			SchedulerStateRepo: schedulerRepo,
+			GeneratorRegistry:  generators,
+			PublisherRegistry:  publishers,
+			Clock:              clock,
+			IDGenerator:        idgen.CryptoIDGenerator{},
+			Hasher:             hashutil.DirHasher{Root: cfg.Universe.Path},
+			Planner:            plannerSvc,
+		},
+		validate: validateuniverse.Handler{UniverseRepo: universeRepo},
+		show:     showepisode.Handler{EpisodeRepo: episodeRepo},
+		nextRun: nextrun.Handler{
+			Registry:           generators,
+			SchedulerStateRepo: schedulerRepo,
+			Clock:              clock,
+		},
+	}, nil
+}
+
+func buildGeneratorRegistry(cfg config.Config) (ports.GeneratorRegistry, error) {
+	defs := make([]ports.RegisteredGenerator, 0, len(cfg.Artists))
+	for _, ac := range cfg.Artists {
+		if ac.Enabled != nil && !*ac.Enabled {
+			continue
+		}
+		schedulerCfg, err := toSchedulingConfig(ac.Scheduler)
+		if err != nil {
+			return nil, fmt.Errorf("generator %s scheduler: %w", ac.ID, err)
+		}
+		def := ports.RegisteredGenerator{
+			Config: ports.GeneratorConfig{
+				ID:             ac.ID,
+				Type:           episode.OutputType(ac.Type),
+				Style:          ac.Style,
+				PublishTargets: toPublishTargets(ac.PublishTargets),
+				Scheduler:      schedulerCfg,
+				Seed:           ac.Scheduler.Seed,
+			},
+		}
+		switch ac.Type {
+		case "text":
+			provider, err := providerfactory.NewTextProvider(ac.Provider)
+			if err != nil {
+				return nil, fmt.Errorf("generator %s provider: %w", ac.ID, err)
+			}
+			def.Generator = generatortext.Generator{GeneratorID: ac.ID, Provider: provider}
+		case "video":
+			provider, err := providerfactory.NewVideoProvider(ac.Provider)
+			if err != nil {
+				return nil, fmt.Errorf("generator %s provider: %w", ac.ID, err)
+			}
+			def.Generator = generatorvideo.Generator{GeneratorID: ac.ID, Provider: provider, Seed: ac.Scheduler.Seed}
+		case "image":
+			provider, err := providerfactory.NewImageProvider(ac.Provider)
+			if err != nil {
+				return nil, fmt.Errorf("generator %s provider: %w", ac.ID, err)
+			}
+			def.Generator = generatorimage.Generator{GeneratorID: ac.ID, Provider: provider, Seed: ac.Scheduler.Seed}
+		default:
+			return nil, fmt.Errorf("generator %s has unsupported type: %s", ac.ID, ac.Type)
+		}
+		defs = append(defs, def)
+	}
+	return generatorregistry.New(defs), nil
+}
+
+func buildPublisherRegistry(cfg config.Config) ports.PublisherRegistry {
+	var items []ports.Publisher
+	if cfg.Channels.Filesystem.Enabled {
+		items = append(items, publisherfilesystem.Publisher{OutputDir: cfg.Channels.Filesystem.OutputDir})
+	}
+	if cfg.Channels.Twitter.Enabled {
+		items = append(items, publishertwitter.Publisher{
+			DryRun:         cfg.Channels.Twitter.DryRun,
+			BearerTokenEnv: cfg.Channels.Twitter.BearerTokenEnv,
+			BaseURL:        cfg.Channels.Twitter.BaseURL,
+		})
+	}
+	return publisherregistry.New(items)
+}
+
+func toSchedulingConfig(cfg config.SchedulerConfig) (scheduling.Config, error) {
+	minInt, err := time.ParseDuration(cfg.MinInterval)
+	if cfg.Mode == "random_window" && err != nil {
+		return scheduling.Config{}, err
+	}
+	maxInt, err := time.ParseDuration(cfg.MaxInterval)
+	if cfg.Mode == "random_window" && err != nil {
+		return scheduling.Config{}, err
+	}
+	fixedInt, err := time.ParseDuration(cfg.FixedInterval)
+	if cfg.Mode == "fixed_interval" && err != nil {
+		return scheduling.Config{}, err
+	}
+	return scheduling.Config{
+		Mode:          scheduling.Mode(cfg.Mode),
+		MinInterval:   minInt,
+		MaxInterval:   maxInt,
+		FixedInterval: fixedInt,
+		Seed:          cfg.Seed,
+		Timezone:      cfg.Timezone,
+	}, nil
+}
+
+func toPublishTargets(values []string) []publication.ChannelName {
+	out := make([]publication.ChannelName, 0, len(values))
+	for _, value := range values {
+		out = append(out, publication.ChannelName(value))
+	}
+	return out
+}
+
+func isProductionEnv(env string) bool {
+	value := strings.ToLower(strings.TrimSpace(env))
+	return value == "prod" || value == "production"
 }

@@ -5,14 +5,14 @@ A Go engine to generate autonomous text and video episodes from a universe defin
 ## Commands
 
 ```bash
-go run ./cmd/loreforge run --config ./universes/config/config.yaml
-go run ./cmd/loreforge validate --config ./universes/config/config.yaml
-go run ./cmd/loreforge generate once --artist text-artist --config ./universes/config/config.yaml
-go run ./cmd/loreforge generate once --agent text --config ./universes/config/config.yaml
-go run ./cmd/loreforge generate once --artist image-artist --config ./universes/config/config.yaml
-go run ./cmd/loreforge episode show <episode-id> --config ./universes/config/config.yaml
+go run ./cmd/loreforge run --config ./universes/config.yaml
+go run ./cmd/loreforge validate --config ./universes/config.yaml
+go run ./cmd/loreforge generate once --artist text-artist --config ./universes/config.yaml
+go run ./cmd/loreforge generate once --agent text --config ./universes/config.yaml
+go run ./cmd/loreforge generate once --artist image-artist --config ./universes/config.yaml
+go run ./cmd/loreforge episode show <episode-id> --config ./universes/config.yaml
 go run ./cmd/loreforge universe lint ./universes/example-universe
-go run ./cmd/loreforge scheduler next-run --artist text-artist --config ./universes/config/config.yaml
+go run ./cmd/loreforge scheduler next-run --artist text-artist --config ./universes/config.yaml
 ```
 
 The bundled example config is wired to `mock` providers. If you configure a non-mock driver, the engine now fails fast until that provider is implemented.

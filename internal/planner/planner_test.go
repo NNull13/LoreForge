@@ -3,7 +3,7 @@ package planner
 import (
 	"testing"
 
-	"loreforge/internal/universe"
+	"loreforge/internal/domain/universe"
 )
 
 func TestBuildBrief_RespectsWorldCompatibility(t *testing.T) {
