@@ -6,14 +6,18 @@ import (
 )
 
 type EpisodeBrief struct {
-	EpisodeType  string   `json:"episode_type"`
-	WorldID      string   `json:"world_id"`
-	CharacterIDs []string `json:"character_ids"`
-	EventID      string   `json:"event_id"`
-	TemplateID   string   `json:"template_id"`
-	Tone         string   `json:"tone"`
-	Objective    string   `json:"objective"`
-	CanonRules   []string `json:"canon_rules"`
+	EpisodeType   string                    `json:"episode_type"`
+	WorldID       string                    `json:"world_id"`
+	CharacterIDs  []string                  `json:"character_ids"`
+	EventID       string                    `json:"event_id"`
+	TemplateID    string                    `json:"template_id"`
+	TemplateBody  string                    `json:"template_body,omitempty"`
+	Tone          string                    `json:"tone"`
+	Objective     string                    `json:"objective"`
+	CanonRules    []string                  `json:"canon_rules"`
+	CharacterData map[string]map[string]any `json:"character_data,omitempty"`
+	WorldData     map[string]any            `json:"world_data,omitempty"`
+	EventData     map[string]any            `json:"event_data,omitempty"`
 }
 
 type EpisodeState struct {

@@ -59,9 +59,14 @@ func New(cfg config.Config) (*Engine, error) {
 	}
 
 	return &Engine{
-		cfg:       cfg,
-		store:     memory.New("./data"),
-		planner:   planner.New(planner.Config{Weights: cfg.Generation.Weights, RecencyWindow: cfg.Generation.RecencyWindow, Seed: cfg.Scheduler.Seed}),
+		cfg:   cfg,
+		store: memory.New(cfg.Memory.DSN),
+		planner: planner.New(planner.Config{
+			Weights:        cfg.Generation.Weights,
+			RecencyWindow:  cfg.Generation.RecencyWindow,
+			Seed:           cfg.Scheduler.Seed,
+			ProductionMode: isProductionEnv(cfg.App.Env),
+		}),
 		scheduler: sch,
 		agents:    agents,
 		channels:  outChannels,
@@ -94,6 +99,7 @@ func (e *Engine) GenerateOnce(ctx context.Context, requestedAgent string) (contr
 		brief.EpisodeType = requestedAgent
 		brief.TemplateID = pickTemplateForType(u, requestedAgent, brief.TemplateID)
 	}
+	brief = enrichBriefWithUniverseData(brief, u)
 	agent, ok := e.agents[brief.EpisodeType]
 	if !ok {
 		return contracts.EpisodeRecord{}, fmt.Errorf("agent not available: %s", brief.EpisodeType)
@@ -198,13 +204,33 @@ func (e *Engine) ShowEpisode(episodeID string) (string, contracts.EpisodeManifes
 
 func validateOutput(out contracts.EpisodeOutput, brief contracts.EpisodeBrief) error {
 	if brief.EpisodeType == "text" {
-		if len(strings.TrimSpace(out.Content)) < 40 {
+		content := strings.TrimSpace(out.Content)
+		if len(content) < 40 {
 			return errors.New("validation failed: text output too short")
+		}
+		if !containsEntities(content, brief.CharacterIDs) {
+			return errors.New("validation failed: no character mentioned in output")
+		}
+		if maxLen := templateMaxChars(brief.TemplateBody); maxLen > 0 && len(content) > maxLen {
+			return fmt.Errorf("validation failed: text output exceeds template max chars (%d)", maxLen)
 		}
 	}
 	for _, bad := range []string{"api_key", "token=", "secret="} {
 		if strings.Contains(strings.ToLower(out.Content), bad) {
 			return errors.New("validation failed: forbidden term found")
+		}
+	}
+	for _, rule := range brief.CanonRules {
+		const prefix = "FORBIDDEN:"
+		if !strings.HasPrefix(strings.ToUpper(rule), prefix) {
+			continue
+		}
+		term := strings.TrimSpace(rule[len(prefix):])
+		if term == "" {
+			continue
+		}
+		if strings.Contains(strings.ToLower(out.Content), strings.ToLower(term)) {
+			return fmt.Errorf("validation failed: forbidden term found: %s", term)
 		}
 	}
 	return nil
@@ -230,4 +256,60 @@ func pickTemplateForType(u universe.Universe, outputType, fallback string) strin
 		}
 	}
 	return fallback
+}
+
+func enrichBriefWithUniverseData(brief contracts.EpisodeBrief, u universe.Universe) contracts.EpisodeBrief {
+	if t, ok := u.Templates[brief.TemplateID]; ok {
+		brief.TemplateBody = strings.TrimSpace(t.Body)
+	}
+	if w, ok := u.Worlds[brief.WorldID]; ok {
+		brief.WorldData = cloneAnyMap(w.Data)
+	}
+	if ev, ok := u.Events[brief.EventID]; ok {
+		brief.EventData = cloneAnyMap(ev.Data)
+	}
+	if len(brief.CharacterIDs) > 0 {
+		brief.CharacterData = make(map[string]map[string]any, len(brief.CharacterIDs))
+		for _, cid := range brief.CharacterIDs {
+			if ch, ok := u.Characters[cid]; ok {
+				brief.CharacterData[cid] = cloneAnyMap(ch.Data)
+			}
+		}
+	}
+	return brief
+}
+
+func cloneAnyMap(in map[string]any) map[string]any {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
+func templateMaxChars(templateBody string) int {
+	const marker = "MAX_CHARS:"
+	for _, line := range strings.Split(templateBody, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(strings.ToUpper(line), marker) {
+			continue
+		}
+		n := strings.TrimSpace(line[len(marker):])
+		if n == "" {
+			return 0
+		}
+		var v int
+		if _, err := fmt.Sscanf(n, "%d", &v); err == nil && v > 0 {
+			return v
+		}
+	}
+	return 0
+}
+
+func isProductionEnv(env string) bool {
+	e := strings.ToLower(strings.TrimSpace(env))
+	return e == "prod" || e == "production"
 }

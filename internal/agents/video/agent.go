@@ -48,5 +48,19 @@ func (a Agent) Generate(ctx context.Context, brief contracts.EpisodeBrief, _ con
 }
 
 func buildPrompt(brief contracts.EpisodeBrief) string {
+	contextBlock := fmt.Sprintf(
+		"Context:\n- World: %s\n- Characters: %s\n- Event: %s\n- Tone: %s\n- Rules: %s\n- WorldData: %v\n- EventData: %v\n- CharacterData: %v",
+		brief.WorldID,
+		strings.Join(brief.CharacterIDs, ", "),
+		brief.EventID,
+		brief.Tone,
+		strings.Join(brief.CanonRules, " | "),
+		brief.WorldData,
+		brief.EventData,
+		brief.CharacterData,
+	)
+	if strings.TrimSpace(brief.TemplateBody) != "" {
+		return fmt.Sprintf("%s\n\n%s", brief.TemplateBody, contextBlock)
+	}
 	return fmt.Sprintf("Create a short cinematic scene. World: %s. Characters: %s. Event: %s. Tone: %s. Keep canon rules: %s", brief.WorldID, strings.Join(brief.CharacterIDs, ", "), brief.EventID, brief.Tone, strings.Join(brief.CanonRules, " | "))
 }

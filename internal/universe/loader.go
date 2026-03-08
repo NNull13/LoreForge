@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"loreforge/internal/util"
+	"gopkg.in/yaml.v3"
 )
 
 func Load(root string) (Universe, error) {
@@ -79,27 +79,19 @@ func loadEntity(path string) (Entity, error) {
 	if err != nil {
 		return Entity{}, fmt.Errorf("%s: %w", path, err)
 	}
-	m := util.ParseSimpleYAML(fm)
+	var raw map[string]any
+	if err := yaml.Unmarshal([]byte(fm), &raw); err != nil {
+		return Entity{}, fmt.Errorf("%s: invalid frontmatter: %w", path, err)
+	}
+	data := normalizeYAMLMap(raw)
 
-	id := m["id"]
+	id := asString(data["id"])
 	if id == "" {
 		id = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 	}
-	typ := m["type"]
+	typ := asString(data["type"])
 	if typ == "" && strings.HasSuffix(path, "universe.md") {
 		typ = "universe"
-	}
-	data := map[string]any{}
-	for k, v := range m {
-		if strings.HasPrefix(strings.TrimSpace(v), "[") {
-			data[k] = util.ParseInlineList(v)
-			continue
-		}
-		if strings.Contains(v, ",") && (strings.HasSuffix(k, "_worlds") || strings.HasSuffix(k, "_characters") || strings.HasSuffix(k, "_rules") || strings.HasSuffix(k, "affinities")) {
-			data[k] = util.ParseStringListValue(v)
-			continue
-		}
-		data[k] = v
 	}
 
 	return Entity{
@@ -130,6 +122,35 @@ func splitFrontmatter(content string) (fm, body string, err error) {
 func asString(v any) string {
 	s, _ := v.(string)
 	return s
+}
+
+func normalizeYAMLMap(in map[string]any) map[string]any {
+	out := make(map[string]any, len(in))
+	for k, v := range in {
+		out[k] = normalizeYAMLValue(v)
+	}
+	return out
+}
+
+func normalizeYAMLValue(v any) any {
+	switch t := v.(type) {
+	case map[string]any:
+		return normalizeYAMLMap(t)
+	case map[any]any:
+		out := make(map[string]any, len(t))
+		for k, v2 := range t {
+			out[fmt.Sprint(k)] = normalizeYAMLValue(v2)
+		}
+		return out
+	case []any:
+		out := make([]any, 0, len(t))
+		for _, item := range t {
+			out = append(out, normalizeYAMLValue(item))
+		}
+		return out
+	default:
+		return v
+	}
 }
 
 func coalesce(v ...string) string {

@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"sort"
 	"strings"
+	"time"
 
 	"loreforge/internal/universe"
 	"loreforge/pkg/contracts"
@@ -18,9 +19,10 @@ type HistoryCombo struct {
 }
 
 type Config struct {
-	Weights       map[string]int
-	RecencyWindow int
-	Seed          int64
+	Weights        map[string]int
+	RecencyWindow  int
+	Seed           int64
+	ProductionMode bool
 }
 
 type Planner struct {
@@ -33,8 +35,8 @@ func New(cfg Config) *Planner {
 		cfg.RecencyWindow = 20
 	}
 	seed := cfg.Seed
-	if seed == 0 {
-		seed = 42
+	if seed == 0 || cfg.ProductionMode {
+		seed = cfg.Seed ^ time.Now().UnixNano()
 	}
 	return &Planner{rng: rand.New(rand.NewSource(seed)), cfg: cfg}
 }
@@ -45,12 +47,18 @@ func (p *Planner) BuildBrief(u universe.Universe, recent []HistoryCombo) (contra
 		return contracts.EpisodeBrief{}, err
 	}
 	worldID := pickKey(p.rng, u.Worlds)
-	eventID := pickKey(p.rng, u.Events)
+	eventID, err := pickOne(p.rng, compatibleEventIDs(u, worldID))
+	if err != nil {
+		return contracts.EpisodeBrief{}, err
+	}
 	templateID, err := p.pickTemplate(u, episodeType)
 	if err != nil {
 		return contracts.EpisodeBrief{}, err
 	}
-	charIDs := p.pickCharacters(u, 1+p.rng.Intn(2))
+	charIDs, err := p.pickCharactersFromIDs(compatibleCharacterIDs(u, worldID), 1+p.rng.Intn(2))
+	if err != nil {
+		return contracts.EpisodeBrief{}, err
+	}
 
 	candidate := comboKey(worldID, charIDs, eventID)
 	window := recent
@@ -62,8 +70,14 @@ func (p *Planner) BuildBrief(u universe.Universe, recent []HistoryCombo) (contra
 			break
 		}
 		worldID = pickKey(p.rng, u.Worlds)
-		eventID = pickKey(p.rng, u.Events)
-		charIDs = p.pickCharacters(u, 1+p.rng.Intn(2))
+		eventID, err = pickOne(p.rng, compatibleEventIDs(u, worldID))
+		if err != nil {
+			return contracts.EpisodeBrief{}, err
+		}
+		charIDs, err = p.pickCharactersFromIDs(compatibleCharacterIDs(u, worldID), 1+p.rng.Intn(2))
+		if err != nil {
+			return contracts.EpisodeBrief{}, err
+		}
 		candidate = comboKey(worldID, charIDs, eventID)
 	}
 
@@ -98,10 +112,14 @@ func (p *Planner) pickTemplate(u universe.Universe, outputType string) (string, 
 	return ids[p.rng.Intn(len(ids))], nil
 }
 
-func (p *Planner) pickCharacters(u universe.Universe, n int) []string {
-	keys := sortedKeys(u.Characters)
+func (p *Planner) pickCharactersFromIDs(keys []string, n int) ([]string, error) {
+	if len(keys) == 0 {
+		return nil, errors.New("no compatible characters available")
+	}
 	if n >= len(keys) {
-		return keys
+		out := append([]string(nil), keys...)
+		sort.Strings(out)
+		return out, nil
 	}
 	out := make([]string, 0, n)
 	perm := p.rng.Perm(len(keys))
@@ -109,7 +127,7 @@ func (p *Planner) pickCharacters(u universe.Universe, n int) []string {
 		out = append(out, keys[idx])
 	}
 	sort.Strings(out)
-	return out
+	return out, nil
 }
 
 func weightedPick(rng *rand.Rand, weights map[string]int) (string, error) {
@@ -154,6 +172,13 @@ func comboKey(world string, chars []string, event string) string {
 func pickKey[T any](rng *rand.Rand, m map[string]T) string {
 	keys := sortedKeys(m)
 	return keys[rng.Intn(len(keys))]
+}
+
+func pickOne(rng *rand.Rand, items []string) (string, error) {
+	if len(items) == 0 {
+		return "", errors.New("no compatible items available")
+	}
+	return items[rng.Intn(len(items))], nil
 }
 
 func sortedKeys[T any](m map[string]T) []string {
@@ -204,4 +229,37 @@ func toStringSlice(v any) []string {
 		}
 	}
 	return out
+}
+
+func compatibleCharacterIDs(u universe.Universe, worldID string) []string {
+	out := make([]string, 0, len(u.Characters))
+	for id, c := range u.Characters {
+		aff := toStringSlice(c.Data["world_affinities"])
+		if len(aff) == 0 || containsString(aff, worldID) {
+			out = append(out, id)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func compatibleEventIDs(u universe.Universe, worldID string) []string {
+	out := make([]string, 0, len(u.Events))
+	for id, ev := range u.Events {
+		worlds := toStringSlice(ev.Data["compatible_worlds"])
+		if len(worlds) == 0 || containsString(worlds, worldID) {
+			out = append(out, id)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func containsString(list []string, item string) bool {
+	for _, v := range list {
+		if v == item {
+			return true
+		}
+	}
+	return false
 }

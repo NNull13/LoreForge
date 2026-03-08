@@ -1,20 +1,28 @@
 package memory
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
+	"sync"
 	"time"
+
+	_ "github.com/mattn/go-sqlite3"
 
 	"loreforge/internal/planner"
 	"loreforge/pkg/contracts"
 )
 
 type Store struct {
+	dsn     string
 	baseDir string
+
+	initOnce sync.Once
+	initErr  error
+	db       *sql.DB
 }
 
 type HistoryEntry struct {
@@ -30,11 +38,15 @@ type SchedulerState struct {
 	NextRunAt time.Time  `json:"next_run_at"`
 }
 
-func New(baseDir string) *Store {
-	if baseDir == "" {
+func New(dsn string) *Store {
+	if strings.TrimSpace(dsn) == "" {
+		dsn = "./data/universe.db"
+	}
+	baseDir := filepath.Dir(dsn)
+	if baseDir == "." || baseDir == "" {
 		baseDir = "./data"
 	}
-	return &Store{baseDir: baseDir}
+	return &Store{dsn: dsn, baseDir: baseDir}
 }
 
 func (s *Store) SaveEpisode(r contracts.EpisodeRecord) (string, error) {
@@ -130,19 +142,41 @@ func (s *Store) FindEpisode(episodeID string) (string, contracts.EpisodeManifest
 }
 
 func (s *Store) RecentCombos(limit int) ([]planner.HistoryCombo, error) {
-	entries, err := s.readHistory()
+	if limit <= 0 {
+		return nil, nil
+	}
+	if err := s.ensureDB(); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.Query(`
+		SELECT world_id, character_ids, event_id
+		FROM episodes
+		ORDER BY created_at DESC
+		LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
-	sort.Slice(entries, func(i, j int) bool { return entries[i].CreatedAt.Before(entries[j].CreatedAt) })
-	if limit > 0 && len(entries) > limit {
-		entries = entries[len(entries)-limit:]
+	defer rows.Close()
+
+	out := make([]planner.HistoryCombo, 0, limit)
+	for rows.Next() {
+		var worldID, charJSON, eventID string
+		if err := rows.Scan(&worldID, &charJSON, &eventID); err != nil {
+			return nil, err
+		}
+		var chars []string
+		if strings.TrimSpace(charJSON) != "" {
+			if err := json.Unmarshal([]byte(charJSON), &chars); err != nil {
+				return nil, err
+			}
+		}
+		out = append(out, planner.HistoryCombo{
+			WorldID:      worldID,
+			CharacterIDs: chars,
+			EventID:      eventID,
+		})
 	}
-	out := make([]planner.HistoryCombo, 0, len(entries))
-	for _, e := range entries {
-		out = append(out, planner.HistoryCombo{WorldID: e.WorldID, CharacterIDs: e.CharacterIDs, EventID: e.EventID})
-	}
-	return out, nil
+	return out, rows.Err()
 }
 
 func (s *Store) SaveSchedulerState(st SchedulerState) error {
@@ -165,27 +199,56 @@ func (s *Store) LoadSchedulerState() (SchedulerState, error) {
 }
 
 func (s *Store) appendHistory(entry HistoryEntry) error {
-	items, err := s.readHistory()
+	if err := s.ensureDB(); err != nil {
+		return err
+	}
+	b, err := json.Marshal(entry.CharacterIDs)
 	if err != nil {
 		return err
 	}
-	items = append(items, entry)
-	return writeJSON(filepath.Join(s.baseDir, "history.json"), items)
+	_, err = s.db.Exec(`
+		INSERT INTO episodes(id, created_at, world_id, character_ids, event_id)
+		VALUES(?, ?, ?, ?, ?)`,
+		entry.EpisodeID,
+		entry.CreatedAt.UTC().Format(time.RFC3339Nano),
+		entry.WorldID,
+		string(b),
+		entry.EventID,
+	)
+	return err
 }
 
-func (s *Store) readHistory() ([]HistoryEntry, error) {
-	b, err := os.ReadFile(filepath.Join(s.baseDir, "history.json"))
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
+func (s *Store) ensureDB() error {
+	s.initOnce.Do(func() {
+		if err := os.MkdirAll(filepath.Dir(s.dsn), 0o755); err != nil {
+			s.initErr = err
+			return
 		}
-		return nil, err
-	}
-	var items []HistoryEntry
-	if err := json.Unmarshal(b, &items); err != nil {
-		return nil, err
-	}
-	return items, nil
+		db, err := sql.Open("sqlite3", s.dsn)
+		if err != nil {
+			s.initErr = err
+			return
+		}
+		if _, err := db.Exec(`
+			CREATE TABLE IF NOT EXISTS episodes (
+				id TEXT PRIMARY KEY,
+				created_at DATETIME NOT NULL,
+				world_id TEXT,
+				character_ids TEXT,
+				event_id TEXT
+			);`); err != nil {
+			_ = db.Close()
+			s.initErr = err
+			return
+		}
+		if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_episodes_created_at ON episodes(created_at DESC);`); err != nil {
+			_ = db.Close()
+			s.initErr = err
+			return
+		}
+		s.db = db
+	})
+	return s.initErr
 }
 
 func writeJSON(path string, v any) error {

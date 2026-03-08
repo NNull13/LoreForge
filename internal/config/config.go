@@ -7,112 +7,86 @@ import (
 	"path/filepath"
 	"time"
 
-	"loreforge/internal/util"
+	"gopkg.in/yaml.v3"
 )
 
 type Config struct {
-	App        AppConfig
-	Universe   UniverseConfig
-	Scheduler  SchedulerConfig
-	Generation GenerationConfig
-	Providers  ProvidersConfig
-	Channels   ChannelsConfig
-	Memory     MemoryConfig
-	Logging    LoggingConfig
+	App        AppConfig        `yaml:"app"`
+	Universe   UniverseConfig   `yaml:"universe"`
+	Scheduler  SchedulerConfig  `yaml:"scheduler"`
+	Generation GenerationConfig `yaml:"generation"`
+	Providers  ProvidersConfig  `yaml:"providers"`
+	Channels   ChannelsConfig   `yaml:"channels"`
+	Memory     MemoryConfig     `yaml:"memory"`
+	Logging    LoggingConfig    `yaml:"logging"`
 }
 
 type AppConfig struct {
-	Name string
-	Env  string
+	Name string `yaml:"name"`
+	Env  string `yaml:"env"`
 }
 
 type UniverseConfig struct {
-	Path string
+	Path string `yaml:"path"`
 }
 
 type SchedulerConfig struct {
-	Enabled       bool
-	Mode          string
-	MinInterval   string
-	MaxInterval   string
-	FixedInterval string
-	Seed          int64
-	Timezone      string
+	Enabled       bool   `yaml:"enabled"`
+	Mode          string `yaml:"mode"`
+	MinInterval   string `yaml:"min_interval"`
+	MaxInterval   string `yaml:"max_interval"`
+	FixedInterval string `yaml:"fixed_interval"`
+	Seed          int64  `yaml:"seed"`
+	Timezone      string `yaml:"timezone"`
 }
 
 type GenerationConfig struct {
-	EnabledAgents []string
-	Weights       map[string]int
-	MaxRetries    int
-	RecencyWindow int
+	EnabledAgents []string       `yaml:"enabled_agents"`
+	Weights       map[string]int `yaml:"weights"`
+	MaxRetries    int            `yaml:"max_retries"`
+	RecencyWindow int            `yaml:"recency_window"`
 }
 
 type ProviderDriver struct {
-	Driver    string
-	Model     string
-	APIKeyEnv string
+	Driver    string `yaml:"driver"`
+	Model     string `yaml:"model"`
+	APIKeyEnv string `yaml:"api_key_env"`
 }
 
 type ProvidersConfig struct {
-	Text  ProviderDriver
-	Video ProviderDriver
+	Text  ProviderDriver `yaml:"text"`
+	Video ProviderDriver `yaml:"video"`
 }
 
 type FilesystemChannelConfig struct {
-	Enabled   bool
-	OutputDir string
+	Enabled   bool   `yaml:"enabled"`
+	OutputDir string `yaml:"output_dir"`
 }
 
 type ChannelsConfig struct {
-	Filesystem FilesystemChannelConfig
+	Filesystem FilesystemChannelConfig `yaml:"filesystem"`
 }
 
 type MemoryConfig struct {
-	Driver string
-	DSN    string
+	Driver string `yaml:"driver"`
+	DSN    string `yaml:"dsn"`
 }
 
 type LoggingConfig struct {
-	Level string
+	Level string `yaml:"level"`
 }
 
 func Load(path string) (Config, error) {
-	var cfg Config
-	m, err := util.ParseSimpleYAMLFile(path)
+	cfg := Config{
+		Scheduler: SchedulerConfig{Enabled: true},
+		Channels:  ChannelsConfig{Filesystem: FilesystemChannelConfig{Enabled: true}},
+	}
+	b, err := os.ReadFile(path)
 	if err != nil {
 		return cfg, fmt.Errorf("read config: %w", err)
 	}
-	cfg = Config{
-		App:      AppConfig{Name: m["app.name"], Env: m["app.env"]},
-		Universe: UniverseConfig{Path: m["universe.path"]},
-		Scheduler: SchedulerConfig{
-			Enabled:       util.MustBool(m["scheduler.enabled"], true),
-			Mode:          m["scheduler.mode"],
-			MinInterval:   m["scheduler.min_interval"],
-			MaxInterval:   m["scheduler.max_interval"],
-			FixedInterval: m["scheduler.fixed_interval"],
-			Seed:          util.MustInt64(m["scheduler.seed"], 42),
-			Timezone:      m["scheduler.timezone"],
-		},
-		Generation: GenerationConfig{
-			EnabledAgents: util.ParseStringListValue(m["generation.enabled_agents"]),
-			Weights: map[string]int{
-				"text":  util.MustInt(m["generation.weights.text"], 70),
-				"video": util.MustInt(m["generation.weights.video"], 30),
-			},
-			MaxRetries:    util.MustInt(m["generation.max_retries"], 2),
-			RecencyWindow: util.MustInt(m["generation.recency_window"], 20),
-		},
-		Providers: ProvidersConfig{
-			Text:  ProviderDriver{Driver: m["providers.text.driver"], Model: m["providers.text.model"], APIKeyEnv: m["providers.text.api_key_env"]},
-			Video: ProviderDriver{Driver: m["providers.video.driver"], Model: m["providers.video.model"], APIKeyEnv: m["providers.video.api_key_env"]},
-		},
-		Channels: ChannelsConfig{Filesystem: FilesystemChannelConfig{
-			Enabled:   util.MustBool(m["channels.filesystem.enabled"], true),
-			OutputDir: m["channels.filesystem.output_dir"],
-		}},
-		Memory:  MemoryConfig{Driver: m["memory.driver"], DSN: m["memory.dsn"]},
-		Logging: LoggingConfig{Level: m["logging.level"]},
+	if err := yaml.Unmarshal(b, &cfg); err != nil {
+		return cfg, fmt.Errorf("parse config yaml: %w", err)
 	}
 
 	if err := cfg.Validate(filepath.Dir(path)); err != nil {
@@ -136,8 +110,14 @@ func (c *Config) Validate(configDir string) error {
 	if c.Scheduler.Mode == "" {
 		c.Scheduler.Mode = "random_window"
 	}
+	if c.Scheduler.Seed == 0 {
+		c.Scheduler.Seed = 42
+	}
 	if c.Generation.MaxRetries < 0 {
 		return errors.New("generation.max_retries cannot be negative")
+	}
+	if c.Generation.MaxRetries == 0 {
+		c.Generation.MaxRetries = 2
 	}
 	if c.Generation.RecencyWindow <= 0 {
 		c.Generation.RecencyWindow = 20
@@ -182,6 +162,13 @@ func (c *Config) Validate(configDir string) error {
 	}
 	if len(c.Generation.Weights) == 0 {
 		c.Generation.Weights = map[string]int{"text": 70, "video": 30}
+	} else {
+		if c.Generation.Weights["text"] == 0 {
+			c.Generation.Weights["text"] = 70
+		}
+		if c.Generation.Weights["video"] == 0 {
+			c.Generation.Weights["video"] = 30
+		}
 	}
 	return nil
 }
