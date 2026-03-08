@@ -11,6 +11,8 @@ import (
 type EpisodeBrief = episode.Brief
 type EpisodeState = episode.State
 type EpisodeOutput = episode.Output
+type EpisodeManifest = episode.Manifest
+type EpisodeRecord = episode.Record
 type TextRequest = providercontracts.TextRequest
 type TextResponse = providercontracts.TextResponse
 type VideoRequest = providercontracts.VideoRequest

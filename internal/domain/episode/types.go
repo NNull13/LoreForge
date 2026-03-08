@@ -33,8 +33,9 @@ type Brief struct {
 }
 
 type State struct {
-	RecentEpisodeIDs []string `json:"recent_episode_ids"`
-	UniverseVersion  string   `json:"universe_version"`
+	RecentEpisodeIDs []string       `json:"recent_episode_ids"`
+	UniverseVersion  string         `json:"universe_version"`
+	Metadata         map[string]any `json:"metadata,omitempty"`
 }
 
 type Output struct {

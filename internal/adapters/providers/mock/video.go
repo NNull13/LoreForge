@@ -29,5 +29,6 @@ func (p VideoProvider) GenerateVideo(_ context.Context, input providercontracts.
 	return providercontracts.VideoResponse{
 		AssetPath: path,
 		Model:     coalesce(p.Model, "mock-video-v1"),
+		Metadata:  map[string]any{"driver": "mock"},
 	}, nil
 }

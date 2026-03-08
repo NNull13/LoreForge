@@ -69,6 +69,17 @@ func (h Handler) Handle(ctx context.Context, req Request) (Result, error) {
 	state := episode.State{
 		UniverseVersion:  universeVersion,
 		RecentEpisodeIDs: combosToKeys(recentByGenerator),
+		Metadata:         map[string]any{},
+	}
+	var bootstrapImage episode.Output
+	if def.Config.ProviderDriver == "runway_gen4" {
+		bootstrapImage, err = h.bootstrapRunwayImage(ctx, req, brief, state, def)
+		if err != nil {
+			return Result{}, err
+		}
+		if bootstrapImage.AssetPath != "" {
+			state.Metadata["prompt_image"] = bootstrapImage.AssetPath
+		}
 	}
 	var out episode.Output
 	retries := 0
@@ -122,6 +133,7 @@ func (h Handler) Handle(ctx context.Context, req Request) (Result, error) {
 			"artist_recent":     recentByGenerator,
 			"generator_targets": def.Config.PublishTargets,
 			"artist_targets":    def.Config.PublishTargets,
+			"provider_driver":   def.Config.ProviderDriver,
 		},
 		Prompt:           out.Prompt,
 		ProviderRequest:  sanitizeSecrets(out.ProviderRequest),
@@ -130,6 +142,13 @@ func (h Handler) Handle(ctx context.Context, req Request) (Result, error) {
 		OutputAssetPath:  out.AssetPath,
 	}
 	record.Publish = h.publish(ctx, record, def.Config.PublishTargets)
+	if bootstrapImage.AssetPath != "" {
+		record.Context["visual_pipeline"] = map[string]any{
+			"bootstrap_image_asset_path": bootstrapImage.AssetPath,
+			"bootstrap_provider":         bootstrapImage.Provider,
+			"bootstrap_generator_id":     state.Metadata["bootstrap_generator_id"],
+		}
+	}
 	record.Manifest.Channels = publishedChannels(record.Publish)
 	record.Manifest.Published = len(record.Manifest.Channels) > 0
 	if record.Manifest.Published {
@@ -150,6 +169,32 @@ func (h Handler) Handle(ctx context.Context, req Request) (Result, error) {
 		}
 	}
 	return Result{Record: record, Stored: stored}, nil
+}
+
+func (h Handler) bootstrapRunwayImage(ctx context.Context, req Request, brief episode.Brief, state episode.State, def ports.RegisteredGenerator) (episode.Output, error) {
+	bootstrapID, _ := def.Config.Options["bootstrap_image_generator"].(string)
+	if strings.TrimSpace(bootstrapID) == "" {
+		if providerDriver, ok := def.Config.Options["bootstrap_image_provider"].(string); ok && strings.TrimSpace(providerDriver) != "" {
+			for _, item := range h.GeneratorRegistry.List() {
+				if item.Config.Type == episode.OutputTypeImage && item.Config.ProviderDriver == providerDriver {
+					bootstrapID = item.Config.ID
+					break
+				}
+			}
+		}
+	}
+	if strings.TrimSpace(bootstrapID) == "" {
+		return episode.Output{}, fmt.Errorf("runway_gen4 requires options.bootstrap_image_generator or options.bootstrap_image_provider")
+	}
+	bootstrap, ok := h.GeneratorRegistry.GetByID(bootstrapID)
+	if !ok {
+		return episode.Output{}, fmt.Errorf("bootstrap image generator not available: %s", bootstrapID)
+	}
+	if bootstrap.Config.Type != episode.OutputTypeImage {
+		return episode.Output{}, fmt.Errorf("bootstrap generator %s is not an image generator", bootstrapID)
+	}
+	state.Metadata["bootstrap_generator_id"] = bootstrapID
+	return bootstrap.Generator.Generate(ctx, brief, state)
 }
 
 func (h Handler) resolveGenerator(requested string, ctx context.Context) (ports.RegisteredGenerator, error) {

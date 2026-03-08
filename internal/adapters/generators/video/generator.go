@@ -21,16 +21,29 @@ func (g Generator) ID() string { return g.GeneratorID }
 func (g Generator) Type() episode.OutputType { return episode.OutputTypeVideo }
 
 func (g Generator) Generate(ctx context.Context, brief episode.Brief, _ episode.State) (episode.Output, error) {
+	return g.GenerateWithState(ctx, brief, episode.State{})
+}
+
+func (g Generator) GenerateWithState(ctx context.Context, brief episode.Brief, state episode.State) (episode.Output, error) {
 	prompt := buildPrompt(brief)
 	seed := g.Seed
 	if seed == 0 {
 		seed = time.Now().UnixNano()
 	}
-	resp, err := g.Provider.GenerateVideo(ctx, providercontracts.VideoRequest{
-		Prompt:   prompt,
-		Duration: 15,
-		Seed:     seed,
-	})
+	req := providercontracts.VideoRequest{
+		Prompt:      prompt,
+		Duration:    15,
+		Seed:        seed,
+		AspectRatio: "1280:720",
+		Resolution:  "720p",
+		Count:       1,
+	}
+	if state.Metadata != nil {
+		if v, ok := state.Metadata["prompt_image"].(string); ok {
+			req.PromptImage = v
+		}
+	}
+	resp, err := g.Provider.GenerateVideo(ctx, req)
 	if err != nil {
 		return episode.Output{}, err
 	}
@@ -40,12 +53,19 @@ func (g Generator) Generate(ctx context.Context, brief episode.Brief, _ episode.
 		Model:     resp.Model,
 		Prompt:    prompt,
 		ProviderRequest: map[string]any{
-			"prompt":   prompt,
-			"duration": 15,
-			"seed":     seed,
+			"prompt":       prompt,
+			"duration":     req.Duration,
+			"seed":         seed,
+			"prompt_image": req.PromptImage,
+			"aspect_ratio": req.AspectRatio,
+			"resolution":   req.Resolution,
+			"count":        req.Count,
 		},
 		ProviderResponse: map[string]any{
 			"asset_path": resp.AssetPath,
+			"url":        resp.URL,
+			"job_id":     resp.JobID,
+			"metadata":   resp.Metadata,
 		},
 	}, nil
 }

@@ -254,6 +254,10 @@ func buildGeneratorRegistry(cfg config.Config) (ports.GeneratorRegistry, error) 
 				PublishTargets: toPublishTargets(ac.PublishTargets),
 				Scheduler:      schedulerCfg,
 				Seed:           ac.Scheduler.Seed,
+				ProviderDriver: ac.Provider.Driver,
+				ProviderModel:  ac.Provider.Model,
+				ProviderConfig: providerConfigMap(ac.Provider),
+				Options:        cloneAnyMap(ac.Options),
 			},
 		}
 		switch ac.Type {
@@ -332,4 +336,31 @@ func toPublishTargets(values []string) []publication.ChannelName {
 func isProductionEnv(env string) bool {
 	value := strings.ToLower(strings.TrimSpace(env))
 	return value == "prod" || value == "production"
+}
+
+func providerConfigMap(cfg config.ProviderDriver) map[string]any {
+	return map[string]any{
+		"driver":         cfg.Driver,
+		"model":          cfg.Model,
+		"api_key_env":    cfg.APIKeyEnv,
+		"base_url":       cfg.BaseURL,
+		"project_id_env": cfg.ProjectIDEnv,
+		"location":       cfg.Location,
+		"bucket_uri":     cfg.BucketURI,
+		"poll_interval":  cfg.PollInterval,
+		"timeout":        cfg.Timeout,
+		"version":        cfg.Version,
+		"options":        cloneAnyMap(cfg.Options),
+	}
+}
+
+func cloneAnyMap(in map[string]any) map[string]any {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+	return out
 }

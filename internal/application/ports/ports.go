@@ -23,6 +23,10 @@ type GeneratorConfig struct {
 	PublishTargets []publication.ChannelName
 	Scheduler      scheduling.Config
 	Seed           int64
+	ProviderDriver string
+	ProviderModel  string
+	ProviderConfig map[string]any
+	Options        map[string]any
 }
 
 type RegisteredGenerator struct {

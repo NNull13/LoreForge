@@ -26,12 +26,17 @@ func (g Generator) Generate(ctx context.Context, brief episode.Brief, _ episode.
 	if seed == 0 {
 		seed = time.Now().UnixNano()
 	}
-	resp, err := g.Provider.GenerateImage(ctx, providercontracts.ImageRequest{
-		Prompt: prompt,
-		Width:  1024,
-		Height: 1024,
-		Seed:   seed,
-	})
+	req := providercontracts.ImageRequest{
+		Prompt:       prompt,
+		Width:        1024,
+		Height:       1024,
+		AspectRatio:  "1:1",
+		Seed:         seed,
+		Count:        1,
+		OutputFormat: "png",
+		Quality:      "auto",
+	}
+	resp, err := g.Provider.GenerateImage(ctx, req)
 	if err != nil {
 		return episode.Output{}, err
 	}
@@ -41,13 +46,21 @@ func (g Generator) Generate(ctx context.Context, brief episode.Brief, _ episode.
 		Model:     resp.Model,
 		Prompt:    prompt,
 		ProviderRequest: map[string]any{
-			"prompt": prompt,
-			"width":  1024,
-			"height": 1024,
-			"seed":   seed,
+			"prompt":        prompt,
+			"width":         req.Width,
+			"height":        req.Height,
+			"seed":          seed,
+			"aspect_ratio":  req.AspectRatio,
+			"count":         req.Count,
+			"output_format": req.OutputFormat,
+			"quality":       req.Quality,
 		},
 		ProviderResponse: map[string]any{
-			"asset_path": resp.AssetPath,
+			"asset_path":     resp.AssetPath,
+			"url":            resp.URL,
+			"mime_type":      resp.MIMEType,
+			"revised_prompt": resp.RevisedPrompt,
+			"metadata":       resp.Metadata,
 		},
 	}, nil
 }

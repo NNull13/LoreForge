@@ -29,5 +29,6 @@ func (p ImageProvider) GenerateImage(_ context.Context, input providercontracts.
 	return providercontracts.ImageResponse{
 		AssetPath: path,
 		Model:     coalesce(p.Model, "mock-image-v1"),
+		MIMEType:  "image/png",
 	}, nil
 }

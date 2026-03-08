@@ -50,9 +50,17 @@ type GenerationConfig struct {
 }
 
 type ProviderDriver struct {
-	Driver    string `yaml:"driver"`
-	Model     string `yaml:"model"`
-	APIKeyEnv string `yaml:"api_key_env"`
+	Driver       string         `yaml:"driver"`
+	Model        string         `yaml:"model"`
+	APIKeyEnv    string         `yaml:"api_key_env"`
+	BaseURL      string         `yaml:"base_url"`
+	ProjectIDEnv string         `yaml:"project_id_env"`
+	Location     string         `yaml:"location"`
+	BucketURI    string         `yaml:"bucket_uri"`
+	PollInterval string         `yaml:"poll_interval"`
+	Timeout      string         `yaml:"timeout"`
+	Version      string         `yaml:"version"`
+	Options      map[string]any `yaml:"options"`
 }
 
 type ProvidersConfig struct {
@@ -67,6 +75,7 @@ type ArtistConfig struct {
 	Enabled        *bool           `yaml:"enabled"`
 	Style          string          `yaml:"style"`
 	Provider       ProviderDriver  `yaml:"provider"`
+	Options        map[string]any  `yaml:"options"`
 	PublishTargets []string        `yaml:"publish_targets"`
 	Scheduler      SchedulerConfig `yaml:"scheduler"`
 }
@@ -330,6 +339,9 @@ func (c *Config) validateArtists() error {
 		if a.Provider.Driver == "" {
 			return fmt.Errorf("artist %s provider.driver is required", a.ID)
 		}
+		if err := validateProviderDriver(*a); err != nil {
+			return err
+		}
 		if err := validateScheduler(a.Scheduler, true); err != nil {
 			return fmt.Errorf("artist %s scheduler invalid: %w", a.ID, err)
 		}
@@ -351,10 +363,102 @@ func (c *Config) applyProviderDefaults() {
 	if c.Providers.Video.Model == "" {
 		c.Providers.Video.Model = "mock-video-v1"
 	}
+	if c.Providers.Video.PollInterval == "" {
+		c.Providers.Video.PollInterval = "10s"
+	}
+	if c.Providers.Video.Timeout == "" {
+		c.Providers.Video.Timeout = "10m"
+	}
 	if c.Providers.Image.Driver == "" {
 		c.Providers.Image.Driver = "mock"
 	}
 	if c.Providers.Image.Model == "" {
 		c.Providers.Image.Model = "mock-image-v1"
 	}
+	if c.Providers.Image.Timeout == "" {
+		c.Providers.Image.Timeout = "2m"
+	}
+	if c.Providers.Text.Timeout == "" {
+		c.Providers.Text.Timeout = "2m"
+	}
+	if c.Providers.Image.Location == "" {
+		c.Providers.Image.Location = "us-central1"
+	}
+	if c.Providers.Video.Location == "" {
+		c.Providers.Video.Location = "us-central1"
+	}
+	if c.Providers.Video.Version == "" {
+		c.Providers.Video.Version = "2024-11-06"
+	}
+}
+
+func validateProviderDriver(a ArtistConfig) error {
+	driver := a.Provider.Driver
+	switch driver {
+	case "mock":
+		return nil
+	case "openai_image":
+		if a.Provider.APIKeyEnv == "" {
+			return fmt.Errorf("artist %s provider.api_key_env is required for openai_image", a.ID)
+		}
+		if a.Provider.Model == "" {
+			return fmt.Errorf("artist %s provider.model is required for openai_image", a.ID)
+		}
+		if v, ok := a.Provider.Options["response_format"].(string); ok && v != "" && v != "b64_json" && v != "url" {
+			return fmt.Errorf("artist %s provider.options.response_format must be b64_json or url", a.ID)
+		}
+	case "vertex_imagen":
+		if a.Provider.ProjectIDEnv == "" {
+			return fmt.Errorf("artist %s provider.project_id_env is required for vertex_imagen", a.ID)
+		}
+		if a.Provider.Location == "" {
+			return fmt.Errorf("artist %s provider.location is required for vertex_imagen", a.ID)
+		}
+		if a.Provider.Model == "" {
+			return fmt.Errorf("artist %s provider.model is required for vertex_imagen", a.ID)
+		}
+		if a.Provider.Timeout != "" {
+			if _, err := time.ParseDuration(a.Provider.Timeout); err != nil {
+				return fmt.Errorf("artist %s provider.timeout invalid: %w", a.ID, err)
+			}
+		}
+	case "vertex_veo":
+		if a.Provider.ProjectIDEnv == "" {
+			return fmt.Errorf("artist %s provider.project_id_env is required for vertex_veo", a.ID)
+		}
+		if a.Provider.Location == "" {
+			return fmt.Errorf("artist %s provider.location is required for vertex_veo", a.ID)
+		}
+		if a.Provider.BucketURI == "" {
+			return fmt.Errorf("artist %s provider.bucket_uri is required for vertex_veo", a.ID)
+		}
+		if a.Provider.Model == "" {
+			return fmt.Errorf("artist %s provider.model is required for vertex_veo", a.ID)
+		}
+		if _, err := time.ParseDuration(a.Provider.PollInterval); err != nil {
+			return fmt.Errorf("artist %s provider.poll_interval invalid: %w", a.ID, err)
+		}
+		if _, err := time.ParseDuration(a.Provider.Timeout); err != nil {
+			return fmt.Errorf("artist %s provider.timeout invalid: %w", a.ID, err)
+		}
+	case "runway_gen4":
+		if a.Provider.APIKeyEnv == "" {
+			return fmt.Errorf("artist %s provider.api_key_env is required for runway_gen4", a.ID)
+		}
+		if a.Provider.Model == "" {
+			return fmt.Errorf("artist %s provider.model is required for runway_gen4", a.ID)
+		}
+		if a.Provider.Version == "" {
+			return fmt.Errorf("artist %s provider.version is required for runway_gen4", a.ID)
+		}
+		if _, err := time.ParseDuration(a.Provider.PollInterval); err != nil {
+			return fmt.Errorf("artist %s provider.poll_interval invalid: %w", a.ID, err)
+		}
+		if _, err := time.ParseDuration(a.Provider.Timeout); err != nil {
+			return fmt.Errorf("artist %s provider.timeout invalid: %w", a.ID, err)
+		}
+	default:
+		return fmt.Errorf("artist %s provider.driver unsupported: %s", a.ID, driver)
+	}
+	return nil
 }
