@@ -12,7 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	sharederrors "loreforge/internal/adapters/providers/shared/errors"
+	"loreforge/internal/adapters/providers/shared/provider_errors"
 )
 
 func WriteTempAsset(prefix, extension string, content []byte) (string, error) {
@@ -48,11 +48,11 @@ func DownloadToTemp(ctx context.Context, client *http.Client, sourceURL, prefix 
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", "", fmt.Errorf("%w: %v", sharederrors.ErrAssetDownloadFailed, err)
+		return "", "", fmt.Errorf("%w: %v", provider_errors.ErrAssetDownloadFailed, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", "", fmt.Errorf("%w: status %d", sharederrors.ErrAssetDownloadFailed, resp.StatusCode)
+		return "", "", fmt.Errorf("%w: status %d", provider_errors.ErrAssetDownloadFailed, resp.StatusCode)
 	}
 	content, err := io.ReadAll(resp.Body)
 	if err != nil {

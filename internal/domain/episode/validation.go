@@ -82,7 +82,7 @@ func validateTextualOutput(out Output, brief Brief) error {
 			maxParts = 5
 		}
 		if len(parts) < minParts || len(parts) > maxParts {
-			return fmt.Errorf("%w: tweet_thread requires 2-5 parts", ErrOutputInvalid)
+			return fmt.Errorf("%w: tweet_thread requires %d-%d parts, got %d", ErrOutputInvalid, minParts, maxParts, len(parts))
 		}
 		maxChars := constraints.MaxCharsPerPart
 		if maxChars <= 0 {
@@ -90,7 +90,7 @@ func validateTextualOutput(out Output, brief Brief) error {
 		}
 		for _, part := range parts {
 			if len([]rune(strings.TrimSpace(part))) > maxChars {
-				return fmt.Errorf("%w: tweet_thread part exceeds 280 chars", ErrOutputInvalid)
+				return fmt.Errorf("%w: tweet_thread part exceeds %d chars", ErrOutputInvalid, maxChars)
 			}
 		}
 	case OutputTypeShortStory:

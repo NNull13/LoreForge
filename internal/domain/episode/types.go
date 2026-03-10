@@ -50,7 +50,7 @@ type ArtistLens struct {
 	Role           string                     `json:"role"`
 	Summary        string                     `json:"summary,omitempty"`
 	Body           string                     `json:"body,omitempty"`
-	NonDiegetic    bool                       `json:"non_diegietic"`
+	NonDiegetic    bool                       `json:"non_diegetic"`
 	Voice          map[string]string          `json:"voice,omitempty"`
 	Mission        string                     `json:"mission,omitempty"`
 	PromptingRules []string                   `json:"prompting_rules,omitempty"`

@@ -101,7 +101,6 @@ type ArtistConfig struct {
 	PromptOverrides ArtistPromptOverrideConfig       `yaml:"prompt_overrides"`
 	Presentation    ArtistPresentationOverrideConfig `yaml:"presentation"`
 	Publish         []ArtistPublishTargetConfig      `yaml:"publish"`
-	PublishTargets  []string                         `yaml:"publish_targets"`
 	Scheduler       SchedulerConfig                  `yaml:"scheduler"`
 }
 
@@ -136,9 +135,6 @@ type TwitterChannelConfig struct {
 	Enabled        bool                            `yaml:"enabled"`
 	DefaultAccount string                          `yaml:"default_account"`
 	Accounts       map[string]TwitterAccountConfig `yaml:"accounts"`
-	DryRun         bool                            `yaml:"dry_run"`
-	BearerTokenEnv string                          `yaml:"bearer_token_env"`
-	BaseURL        string                          `yaml:"base_url"`
 }
 
 type TwitterAccountConfig struct {
@@ -283,7 +279,6 @@ func (c *Config) applyArtistDefaults(a *ArtistConfig) {
 		a.Enabled = boolPtr(true)
 	}
 	a.Scheduler = mergeSchedulerConfig(c.Scheduler, a.Scheduler)
-	a.normalizePublishTargets()
 	for i := range a.Publish {
 		if a.Publish[i].Channel == "twitter" && strings.TrimSpace(a.Publish[i].Account) == "" {
 			a.Publish[i].Account = c.Channels.Twitter.DefaultAccount
@@ -463,37 +458,11 @@ func stringSliceFromAny(v any) ([]string, bool) {
 	}
 }
 
-func (a *ArtistConfig) normalizePublishTargets() {
-	if len(a.Publish) > 0 {
-		return
-	}
-	if len(a.PublishTargets) == 0 {
-		return
-	}
-	a.Publish = make([]ArtistPublishTargetConfig, 0, len(a.PublishTargets))
-	for _, target := range a.PublishTargets {
-		target = strings.TrimSpace(target)
-		if target == "" {
-			continue
-		}
-		a.Publish = append(a.Publish, ArtistPublishTargetConfig{Channel: target})
-	}
-}
 
 func (c *Config) normalizeTwitterAccounts() {
 	twitterCfg := &c.Channels.Twitter
 	if twitterCfg.Accounts == nil {
 		twitterCfg.Accounts = map[string]TwitterAccountConfig{}
-	}
-	if len(twitterCfg.Accounts) == 0 && (twitterCfg.Enabled || twitterCfg.DryRun || twitterCfg.BearerTokenEnv != "" || twitterCfg.BaseURL != "") {
-		twitterCfg.Accounts["base"] = TwitterAccountConfig{
-			DryRun:         twitterCfg.DryRun,
-			BearerTokenEnv: twitterCfg.BearerTokenEnv,
-			BaseURL:        twitterCfg.BaseURL,
-		}
-		if twitterCfg.DefaultAccount == "" {
-			twitterCfg.DefaultAccount = "base"
-		}
 	}
 	for name, account := range twitterCfg.Accounts {
 		if account.BaseURL == "" {
@@ -529,11 +498,11 @@ func (c Config) validateArtistPublishTargets(a ArtistConfig) error {
 			if !c.Channels.Twitter.Enabled {
 				return fmt.Errorf("artist %s references disabled channel: %s", a.ID, channel)
 			}
-			if strings.TrimSpace(c.Channels.Twitter.DefaultAccount) == "" {
-				return fmt.Errorf("artist %s requires channels.twitter.default_account", a.ID)
-			}
 			account := strings.TrimSpace(target.Account)
 			if account == "" {
+				if strings.TrimSpace(c.Channels.Twitter.DefaultAccount) == "" {
+					return fmt.Errorf("artist %s requires channels.twitter.default_account", a.ID)
+				}
 				account = c.Channels.Twitter.DefaultAccount
 			}
 			if _, ok := c.Channels.Twitter.Accounts[account]; !ok {

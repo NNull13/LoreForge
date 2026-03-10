@@ -27,7 +27,6 @@ type GeneratorConfig struct {
 	Seed                  int64
 	ProviderDriver        string
 	ProviderModel         string
-	ProviderConfig        map[string]any
 	Options               map[string]any
 	ReferenceMode         string
 	MaxContinuityItems    int

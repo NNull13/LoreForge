@@ -17,35 +17,36 @@ import (
 	"loreforge/internal/adapters/publishers/filesystem"
 	publishers "loreforge/internal/adapters/publishers/registry"
 	"loreforge/internal/adapters/publishers/twitter"
-	"loreforge/internal/adapters/repositories/episodestore"
-	"loreforge/internal/adapters/repositories/schedulerstatefs"
-	"loreforge/internal/adapters/repositories/universefs"
-	"loreforge/internal/application/configrefresh"
-	"loreforge/internal/application/generateepisode"
-	"loreforge/internal/application/listartists"
-	"loreforge/internal/application/nextrun"
+	"loreforge/internal/adapters/repositories/episode_store"
+	"loreforge/internal/adapters/repositories/scheduler_state_fs"
+	"loreforge/internal/adapters/repositories/universe_fs"
+	"loreforge/internal/application/config_refresh"
+	"loreforge/internal/application/generate_episode"
+	"loreforge/internal/application/list_artists"
+	"loreforge/internal/application/next_run"
 	"loreforge/internal/application/ports"
-	"loreforge/internal/application/showepisode"
-	"loreforge/internal/application/textsettings"
-	"loreforge/internal/application/validateuniverse"
+	"loreforge/internal/application/scheduler"
+	"loreforge/internal/application/show_episode"
+	"loreforge/internal/application/text_settings"
+	"loreforge/internal/application/validate_universe"
 	"loreforge/internal/config"
 	"loreforge/internal/domain/episode"
 	"loreforge/internal/domain/publication"
 	"loreforge/internal/domain/scheduling"
 	"loreforge/internal/domain/universe"
 	"loreforge/internal/planner"
-	"loreforge/internal/platform/hashutil"
-	"loreforge/internal/platform/idgen"
-	"loreforge/internal/platform/timeutil"
+	"loreforge/internal/platform/hash_util"
+	"loreforge/internal/platform/id_generator"
+	"loreforge/internal/platform/time_util"
 )
 
 type app struct {
-	generate generateepisode.Handler
-	validate validateuniverse.Handler
-	show     showepisode.Handler
-	nextRun  nextrun.Handler
-	refresh  configrefresh.Handler
-	artists  listartists.Handler
+	generate generate_episode.Handler
+	validate validate_universe.Handler
+	show     show_episode.Handler
+	nextRun  next_run.Handler
+	refresh  config_refresh.Handler
+	artists  list_artists.Handler
 }
 
 func main() {
@@ -83,7 +84,7 @@ func runCmd(args []string) {
 	cfg := loadConfigOrExit(*configPath)
 	app, err := buildApp(cfg)
 	must(err)
-	res, err := app.generate.Handle(context.Background(), generateepisode.Request{
+	res, err := app.generate.Handle(context.Background(), generate_episode.Request{
 		MaxRetries:    cfg.Generation.MaxRetries,
 		RecencyWindow: cfg.Generation.RecencyWindow,
 	})
@@ -119,7 +120,7 @@ func generateCmd(args []string) {
 	if selected == "" {
 		selected = *agent
 	}
-	res, err := app.generate.Handle(context.Background(), generateepisode.Request{
+	res, err := app.generate.Handle(context.Background(), generate_episode.Request{
 		Generator:     selected,
 		MaxRetries:    cfg.Generation.MaxRetries,
 		RecencyWindow: cfg.Generation.RecencyWindow,
@@ -140,7 +141,7 @@ func episodeCmd(args []string) {
 	cfg := loadConfigOrExit(*configPath)
 	app, err := buildApp(cfg)
 	must(err)
-	res, err := app.show.Handle(context.Background(), showepisode.Request{EpisodeID: epID})
+	res, err := app.show.Handle(context.Background(), show_episode.Request{EpisodeID: epID})
 	must(err)
 	b, _ := json.MarshalIndent(res.Manifest, "", "  ")
 	fmt.Printf("episode path: %s\n%s\n", res.Path, string(b))
@@ -152,7 +153,7 @@ func universeCmd(args []string) {
 		os.Exit(1)
 	}
 	path := args[1]
-	repo := universefs.Repository{Root: path}
+	repo := universe_fs.Repository{Root: path}
 	_, err := repo.Load(context.Background())
 	must(err)
 	fmt.Println("universe lint ok")
@@ -171,12 +172,12 @@ func schedulerCmd(args []string) {
 	app, err := buildApp(cfg)
 	must(err)
 	if *artist != "" {
-		next, err := app.nextRun.Handle(context.Background(), nextrun.Request{GeneratorID: *artist})
+		next, err := app.nextRun.Handle(context.Background(), next_run.Request{GeneratorID: *artist})
 		must(err)
 		fmt.Printf("next run (%s): %s\n", *artist, next.Format(time.RFC3339))
 		return
 	}
-	next, err := app.nextRun.Handle(context.Background(), nextrun.Request{})
+	next, err := app.nextRun.Handle(context.Background(), next_run.Request{})
 	must(err)
 	fmt.Printf("next run (any artist): %s\n", next.Format(time.RFC3339))
 }
@@ -264,7 +265,7 @@ func must(err error) {
 }
 
 func buildApp(cfg config.Config) (app, error) {
-	universeRepo := universefs.Repository{Root: cfg.Universe.Path}
+	universeRepo := universe_fs.Repository{Root: cfg.Universe.Path}
 	universeData, err := universeRepo.Load(context.Background())
 	if err != nil {
 		return app{}, err
@@ -274,43 +275,45 @@ func buildApp(cfg config.Config) (app, error) {
 		return app{}, err
 	}
 	publishers := buildPublisherRegistry(cfg)
-	episodeRepo := episodestore.New(cfg.Memory.DSN)
-	schedulerRepo := schedulerstatefs.Repository{BaseDir: episodestore.BaseDirFromDSN(cfg.Memory.DSN)}
+	episodeRepo := episode_store.New(cfg.Memory.DSN)
+	schedulerRepo := scheduler_state_fs.Repository{BaseDir: episode_store.BaseDirFromDSN(cfg.Memory.DSN)}
+	schedulerSvc := scheduler.Service{StateRepo: schedulerRepo}
 	plannerSvc := planner.New(planner.Config{
 		RecencyWindow:  cfg.Generation.RecencyWindow,
 		Seed:           cfg.Scheduler.Seed,
 		ProductionMode: isProductionEnv(cfg.App.Env),
 	})
-	clock := timeutil.RealClock{}
+	clock := time_util.RealClock{}
 	return app{
-		generate: generateepisode.Handler{
-			UniverseRepo:       universeRepo,
-			EpisodeRepo:        episodeRepo,
-			SchedulerStateRepo: schedulerRepo,
-			GeneratorRegistry:  generators,
-			PublisherRegistry:  publishers,
-			Clock:              clock,
-			IDGenerator:        idgen.CryptoIDGenerator{},
-			Hasher:             hashutil.DirHasher{Root: cfg.Universe.Path},
-			Planner:            plannerSvc,
+		generate: generate_episode.Handler{
+			UniverseRepo:      universeRepo,
+			EpisodeRepo:       episodeRepo,
+			Scheduler:         schedulerSvc,
+			GeneratorRegistry: generators,
+			PublisherRegistry: publishers,
+			Clock:             clock,
+			IDGenerator:       id_generator.CryptoIDGenerator{},
+			Hasher:            hash_util.DirHasher{Root: cfg.Universe.Path},
+			Planner:           plannerSvc,
 		},
-		validate: validateuniverse.Handler{UniverseRepo: universeRepo},
-		show:     showepisode.Handler{EpisodeRepo: episodeRepo},
-		nextRun: nextrun.Handler{
+		validate: validate_universe.Handler{UniverseRepo: universeRepo},
+		show:     show_episode.Handler{EpisodeRepo: episodeRepo},
+		nextRun: next_run.Handler{
+			Registry:  generators,
+			Scheduler: schedulerSvc,
+			Clock:     clock,
+		},
+		refresh: config_refresh.Handler{
 			Registry:           generators,
+			Scheduler:          schedulerSvc,
 			SchedulerStateRepo: schedulerRepo,
 			Clock:              clock,
 		},
-		refresh: configrefresh.Handler{
-			Registry:           generators,
-			SchedulerStateRepo: schedulerRepo,
-			Clock:              clock,
-		},
-		artists: listartists.Handler{
-			Registry:           generators,
-			SchedulerStateRepo: schedulerRepo,
-			Clock:              clock,
-			Universe:           universeData,
+		artists: list_artists.Handler{
+			Registry:  generators,
+			Scheduler: schedulerSvc,
+			Clock:     clock,
+			Universe:  universeData,
 		},
 	}, nil
 }
@@ -337,7 +340,6 @@ func buildGeneratorRegistry(cfg config.Config, u universe.Universe) (ports.Gener
 				Seed:                  ac.Scheduler.Seed,
 				ProviderDriver:        ac.Provider.Driver,
 				ProviderModel:         ac.Provider.Model,
-				ProviderConfig:        providerConfigMap(ac.Provider),
 				Options:               cloneAnyMap(ac.Options),
 				ReferenceMode:         optionString(ac.Options, "reference_mode", "creative"),
 				MaxContinuityItems:    optionInt(ac.Options, "max_continuity_items", 3),
@@ -352,24 +354,24 @@ func buildGeneratorRegistry(cfg config.Config, u universe.Universe) (ports.Gener
 			return nil, fmt.Errorf("generator %s references unknown artist profile %s", ac.ID, ac.ProfileID)
 		}
 		switch {
-		case isTextArtistType(ac.Type):
+		case episode.OutputType(ac.Type).IsTextual():
 			provider, err := factory.NewTextProvider(ac.Provider)
 			if err != nil {
 				return nil, fmt.Errorf("generator %s provider: %w", ac.ID, err)
 			}
-			settings, err := textsettings.ResolveTextSettings(cfg, ac)
+			settings, err := text_settings.ResolveTextSettings(cfg, ac)
 			if err != nil {
 				return nil, fmt.Errorf("generator %s text settings: %w", ac.ID, err)
 			}
 			def.Config.TextConstraints = settings.ToConstraints()
 			def.Generator = text.Generator{GeneratorID: ac.ID, Format: episode.OutputType(ac.Type), Settings: settings, Provider: provider}
-		case ac.Type == "video":
+		case episode.OutputType(ac.Type) == episode.OutputTypeVideo:
 			provider, err := factory.NewVideoProvider(ac.Provider)
 			if err != nil {
 				return nil, fmt.Errorf("generator %s provider: %w", ac.ID, err)
 			}
 			def.Generator = video.Generator{GeneratorID: ac.ID, Provider: provider, Seed: ac.Scheduler.Seed}
-		case ac.Type == "image":
+		case episode.OutputType(ac.Type) == episode.OutputTypeImage:
 			provider, err := factory.NewImageProvider(ac.Provider)
 			if err != nil {
 				return nil, fmt.Errorf("generator %s provider: %w", ac.ID, err)
@@ -440,21 +442,6 @@ func isProductionEnv(env string) bool {
 	return value == "prod" || value == "production"
 }
 
-func providerConfigMap(cfg config.ProviderDriver) map[string]any {
-	return map[string]any{
-		"driver":         cfg.Driver,
-		"model":          cfg.Model,
-		"api_key_env":    cfg.APIKeyEnv,
-		"base_url":       cfg.BaseURL,
-		"project_id_env": cfg.ProjectIDEnv,
-		"location":       cfg.Location,
-		"bucket_uri":     cfg.BucketURI,
-		"poll_interval":  cfg.PollInterval,
-		"timeout":        cfg.Timeout,
-		"version":        cfg.Version,
-		"options":        cloneAnyMap(cfg.Options),
-	}
-}
 
 func cloneAnyMap(in map[string]any) map[string]any {
 	if len(in) == 0 {
@@ -561,11 +548,3 @@ func presentationOverridesMap(cfg config.ArtistPresentationOverrideConfig) map[s
 	return out
 }
 
-func isTextArtistType(value string) bool {
-	switch value {
-	case "tweet_short", "tweet_thread", "short_story", "long_story", "poem", "song_lyrics", "screenplay_series":
-		return true
-	default:
-		return false
-	}
-}

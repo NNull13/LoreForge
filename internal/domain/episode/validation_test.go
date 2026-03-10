@@ -1,6 +1,9 @@
 package episode
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestValidateOutputAcceptsValidTweetThread(t *testing.T) {
 	t.Parallel()
@@ -89,6 +92,39 @@ func TestContainsEntitiesAndTemplateMaxChars(t *testing.T) {
 	}
 	if got := TemplateMaxChars("MAX_CHARS: 120\nBody"); got != 120 {
 		t.Fatalf("TemplateMaxChars = %d, want 120", got)
+	}
+}
+
+func TestValidateOutputTweetThreadMessageReflectsConfiguredLimits(t *testing.T) {
+	t.Parallel()
+
+	// When constraints deviate from defaults, the error message must show the
+	// actual configured values, not the hardcoded "2-5 parts" string.
+	out := Output{
+		Content: "Part one of many.\n\nPart two keeps going.\n\nPart three is too much.",
+		Text: &TextArtifact{
+			Parts: []TextPart{
+				{Index: 0, Content: "Part one of many."},
+				{Index: 1, Content: "Part two keeps going."},
+				{Index: 2, Content: "Part three is too much."},
+			},
+		},
+	}
+	brief := Brief{
+		EpisodeType: OutputTypeTweetThread,
+		TextConstraints: &TextConstraints{
+			Type:     OutputTypeTweetThread,
+			MinParts: 4,
+			MaxParts: 8,
+		},
+	}
+
+	err := ValidateOutput(out, brief)
+	if err == nil {
+		t.Fatal("expected validation error for thread below MinParts")
+	}
+	if !strings.Contains(err.Error(), "4") || !strings.Contains(err.Error(), "8") {
+		t.Fatalf("error message %q does not include configured limits 4-8", err.Error())
 	}
 }
 

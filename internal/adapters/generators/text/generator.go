@@ -5,15 +5,15 @@ import (
 	"strings"
 
 	"loreforge/internal/adapters/providers/contracts"
-	"loreforge/internal/application/textprompt"
-	"loreforge/internal/application/textsettings"
+	"loreforge/internal/application/text_prompt"
+	"loreforge/internal/application/text_settings"
 	"loreforge/internal/domain/episode"
 )
 
 type Generator struct {
 	GeneratorID string
 	Format      episode.OutputType
-	Settings    textsettings.ResolvedTextSettings
+	Settings    text_settings.ResolvedTextSettings
 	Provider    contracts.TextProvider
 }
 
@@ -22,7 +22,7 @@ func (g Generator) ID() string { return g.GeneratorID }
 func (g Generator) Type() episode.OutputType { return g.Format }
 
 func (g Generator) Generate(ctx context.Context, brief episode.Brief, _ episode.State) (episode.Output, error) {
-	bundle := textprompt.Build(brief, g.Format, g.Settings)
+	bundle := text_prompt.Build(brief, g.Format, g.Settings)
 	resp, err := g.Provider.GenerateText(ctx, contracts.TextRequest{
 		Format:          g.Format,
 		SystemPrompt:    bundle.SystemPrompt,

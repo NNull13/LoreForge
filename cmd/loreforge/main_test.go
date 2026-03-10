@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"loreforge/internal/adapters/repositories/episodestore"
-	"loreforge/internal/adapters/repositories/schedulerstatefs"
+	"loreforge/internal/adapters/repositories/episode_store"
+	"loreforge/internal/adapters/repositories/scheduler_state_fs"
 	"loreforge/internal/config"
 	"loreforge/internal/domain/episode"
 	"loreforge/internal/domain/publication"
@@ -112,9 +112,6 @@ func TestHelperMapsAndProductionEnv(t *testing.T) {
 	if got := presentationOverridesMap(config.ArtistPresentationOverrideConfig{Enabled: testBoolPtr(true), AllowedChannels: []string{"filesystem"}}); got["enabled"] != true {
 		t.Fatalf("unexpected presentation overrides: %#v", got)
 	}
-	if got := providerConfigMap(config.ProviderDriver{Driver: "mock", Model: "m"}); got["driver"] != "mock" {
-		t.Fatalf("unexpected provider config map: %#v", got)
-	}
 }
 
 func testBoolPtr(v bool) *bool { return &v }
@@ -130,10 +127,10 @@ func TestCommandsWorkAgainstTempUniverse(t *testing.T) {
 	captureStdout(t, func() { schedulerCmd([]string{"next-run", "--artist", "story-artist", "--config", cfgPath}) })
 	captureStdout(t, func() { generateCmd([]string{"once", "--artist", "story-artist", "--config", cfgPath}) })
 
-	episodeID := firstEpisodeID(t, episodestore.BaseDirFromDSN(cfg.Memory.DSN))
+	episodeID := firstEpisodeID(t, episode_store.BaseDirFromDSN(cfg.Memory.DSN))
 	captureStdout(t, func() { episodeCmd([]string{"show", episodeID, "--config", cfgPath}) })
 
-	schedulerRepo := schedulerstatefs.Repository{BaseDir: episodestore.BaseDirFromDSN(cfg.Memory.DSN)}
+	schedulerRepo := scheduler_state_fs.Repository{BaseDir: episode_store.BaseDirFromDSN(cfg.Memory.DSN)}
 	if err := schedulerRepo.Save(context.Background(), "story-artist", scheduling.State{NextRunAt: time.Now().Add(-time.Minute)}); err != nil {
 		t.Fatalf("scheduler save: %v", err)
 	}

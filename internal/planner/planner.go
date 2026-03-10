@@ -206,7 +206,7 @@ func (p *Planner) collectRules(u universe.Universe, outputType string) []string 
 			continue
 		}
 		// Targeted rule: include only when the output type matches
-		if t == outputType || (t == "textual" && isTextualOutputType(outputType)) {
+		if t == outputType || (t == "textual" && episode.OutputType(outputType).IsTextual()) {
 			rules = append(rules, r.Body)
 		}
 	}
@@ -216,14 +216,6 @@ func (p *Planner) collectRules(u universe.Universe, outputType string) []string 
 	return rules
 }
 
-func isTextualOutputType(outputType string) bool {
-	switch outputType {
-	case string(episode.OutputTypeTweetShort), string(episode.OutputTypeTweetThread), string(episode.OutputTypeShortStory), string(episode.OutputTypeLongStory), string(episode.OutputTypePoem), string(episode.OutputTypeSongLyrics), string(episode.OutputTypeScreenplaySeries):
-		return true
-	default:
-		return false
-	}
-}
 
 func (p *Planner) universeTone(u universe.Universe) string {
 	if v, ok := u.Universe.Data["creator_presence"].(string); ok && v != "" {

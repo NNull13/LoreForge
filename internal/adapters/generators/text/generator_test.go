@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"loreforge/internal/adapters/providers/contracts"
-	"loreforge/internal/application/textsettings"
+	"loreforge/internal/application/text_settings"
 	"loreforge/internal/domain/episode"
 )
 
@@ -15,7 +15,7 @@ func TestGenerateIncludesStructuredTextAndReferences(t *testing.T) {
 	generator := Generator{
 		GeneratorID: "short-story-artist",
 		Format:      episode.OutputTypeShortStory,
-		Settings:    textsettings.SystemTextDefaults[episode.OutputTypeShortStory],
+		Settings:    text_settings.SystemTextDefaults[episode.OutputTypeShortStory],
 		Provider:    fakeTextProvider{},
 	}
 	output, err := generator.Generate(context.Background(), episode.Brief{

@@ -464,33 +464,6 @@ func TestValidatePublishTargetsAndTwitterAccounts(t *testing.T) {
 	}
 }
 
-func TestValidateSupportsLegacyPublishTargetsAndTwitterConfig(t *testing.T) {
-	t.Parallel()
-
-	root := t.TempDir()
-	cfg := validConfig(root)
-	cfg.Channels.Twitter = TwitterChannelConfig{
-		Enabled:        true,
-		DryRun:         true,
-		BearerTokenEnv: "TWITTER_BEARER_TOKEN",
-		BaseURL:        "https://api.twitter.test",
-	}
-	cfg.Artists[0].Publish = nil
-	cfg.Artists[0].PublishTargets = []string{"twitter"}
-
-	if err := cfg.Validate(root); err != nil {
-		t.Fatalf("Validate returned error: %v", err)
-	}
-	if cfg.Channels.Twitter.DefaultAccount != "base" {
-		t.Fatalf("expected legacy twitter config to synthesize base account, got %#v", cfg.Channels.Twitter)
-	}
-	if got := cfg.Artists[0].Publish; len(got) != 1 || got[0].Channel != "twitter" || got[0].Account != "base" {
-		t.Fatalf("expected legacy publish targets to normalize, got %#v", got)
-	}
-	if cfg.Channels.Twitter.Accounts["base"].BaseURL != "https://api.twitter.test" {
-		t.Fatalf("expected synthesized base account, got %#v", cfg.Channels.Twitter.Accounts["base"])
-	}
-}
 
 func TestValidateRejectsInvalidPublishAccountConfig(t *testing.T) {
 	t.Parallel()
@@ -543,6 +516,51 @@ func TestValidateRejectsInvalidPublishAccountConfig(t *testing.T) {
 				t.Fatalf("Validate err = %v, want substring %q", err, tt.want)
 			}
 		})
+	}
+}
+
+func TestValidateTwitterArtistWithExplicitAccountRequiresNoDefaultAccount(t *testing.T) {
+	t.Parallel()
+
+	// An artist that explicitly sets account: "artist_a" must not require
+	// channels.twitter.default_account to be set (regression test for validation bug).
+	root := t.TempDir()
+	cfg := validConfig(root)
+	cfg.Channels.Twitter = TwitterChannelConfig{
+		Enabled: true,
+		// DefaultAccount intentionally left empty.
+		Accounts: map[string]TwitterAccountConfig{
+			"artist_a": {DryRun: true},
+		},
+	}
+	cfg.Artists[0].Publish = []ArtistPublishTargetConfig{
+		{Channel: "twitter", Account: "artist_a"},
+	}
+
+	if err := cfg.Validate(root); err != nil {
+		t.Fatalf("Validate returned error for artist with explicit twitter account: %v", err)
+	}
+}
+
+func TestValidateTwitterArtistWithoutExplicitAccountRequiresDefaultAccount(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	cfg := validConfig(root)
+	cfg.Channels.Twitter = TwitterChannelConfig{
+		Enabled: true,
+		// No DefaultAccount and no explicit account on the artist — must fail.
+		Accounts: map[string]TwitterAccountConfig{
+			"base": {DryRun: true},
+		},
+	}
+	cfg.Artists[0].Publish = []ArtistPublishTargetConfig{
+		{Channel: "twitter"}, // no account specified
+	}
+
+	err := cfg.Validate(root)
+	if err == nil || !strings.Contains(err.Error(), "default_account") {
+		t.Fatalf("Validate err = %v, want default_account error", err)
 	}
 }
 
