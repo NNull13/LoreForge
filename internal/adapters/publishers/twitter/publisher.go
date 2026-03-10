@@ -10,20 +10,24 @@ import (
 	"strings"
 	"time"
 
+	"loreforge/internal/config"
 	"loreforge/internal/domain/publication"
 )
 
 type Publisher struct {
-	DryRun         bool
-	BearerTokenEnv string
-	BaseURL        string
+	DefaultAccount string
+	Accounts       map[string]config.TwitterAccountConfig
 	Client         *http.Client
 }
 
 func (p Publisher) Name() publication.ChannelName { return publication.ChannelTwitter }
 
 func (p Publisher) Publish(ctx context.Context, item publication.Item) (publication.Result, error) {
-	if p.DryRun {
+	accountName, accountCfg, err := p.resolveAccount(item.Target.Account)
+	if err != nil {
+		return publication.Result{}, err
+	}
+	if accountCfg.DryRun {
 		if len(item.Parts) > 0 {
 			ids := make([]string, 0, len(item.Parts))
 			for i := range item.Parts {
@@ -34,7 +38,7 @@ func (p Publisher) Publish(ctx context.Context, item publication.Item) (publicat
 				Success:    true,
 				ExternalID: ids[0],
 				Message:    "twitter dry-run thread publish",
-				Metadata:   map[string]any{"tweet_ids": ids},
+				Metadata:   map[string]any{"tweet_ids": ids, "account": accountName},
 			}, nil
 		}
 		return publication.Result{
@@ -42,12 +46,10 @@ func (p Publisher) Publish(ctx context.Context, item publication.Item) (publicat
 			Success:    true,
 			ExternalID: "dry-run",
 			Message:    "twitter dry-run publish",
+			Metadata:   map[string]any{"account": accountName},
 		}, nil
 	}
-	tokenVar := p.BearerTokenEnv
-	if tokenVar == "" {
-		tokenVar = "TWITTER_BEARER_TOKEN"
-	}
+	tokenVar := accountCfg.BearerTokenEnv
 	token := strings.TrimSpace(os.Getenv(tokenVar))
 	if token == "" {
 		return publication.Result{}, fmt.Errorf("twitter bearer token not set in %s", tokenVar)
@@ -56,25 +58,22 @@ func (p Publisher) Publish(ctx context.Context, item publication.Item) (publicat
 	if client == nil {
 		client = &http.Client{Timeout: 20 * time.Second}
 	}
-	base := strings.TrimRight(p.BaseURL, "/")
-	if base == "" {
-		base = "https://api.twitter.com"
-	}
+	base := strings.TrimRight(accountCfg.BaseURL, "/")
 	if len(item.Parts) > 0 {
-		return p.publishThread(ctx, client, base, token, item)
+		return p.publishThread(ctx, client, base, token, item, accountName)
 	}
 	text := strings.TrimSpace(item.Content)
 	if text == "" {
 		text = fmt.Sprintf("New %s piece by %s (%s).", item.OutputType, item.GeneratorID, item.EpisodeID)
 	}
-	if len(text) > 280 {
-		text = text[:280]
+	if runes := []rune(text); len(runes) > 280 {
+		text = string(runes[:280])
 	}
 	payload := map[string]any{"text": text}
-	return p.publishSingle(ctx, client, base, token, payload)
+	return p.publishSingle(ctx, client, base, token, payload, accountName)
 }
 
-func (p Publisher) publishThread(ctx context.Context, client *http.Client, base, token string, item publication.Item) (publication.Result, error) {
+func (p Publisher) publishThread(ctx context.Context, client *http.Client, base, token string, item publication.Item, accountName string) (publication.Result, error) {
 	var parentID string
 	tweetIDs := make([]string, 0, len(item.Parts))
 	for idx, part := range item.Parts {
@@ -86,7 +85,7 @@ func (p Publisher) publishThread(ctx context.Context, client *http.Client, base,
 		if parentID != "" {
 			payload["reply"] = map[string]any{"in_reply_to_tweet_id": parentID}
 		}
-		result, err := p.publishSingle(ctx, client, base, token, payload)
+		result, err := p.publishSingle(ctx, client, base, token, payload, accountName)
 		if err != nil {
 			return publication.Result{
 				Channel: string(p.Name()),
@@ -94,6 +93,7 @@ func (p Publisher) publishThread(ctx context.Context, client *http.Client, base,
 				Message: fmt.Sprintf("twitter thread failed after %d tweets", idx),
 				Metadata: map[string]any{
 					"tweet_ids": tweetIDs,
+					"account":   accountName,
 				},
 			}, err
 		}
@@ -105,11 +105,11 @@ func (p Publisher) publishThread(ctx context.Context, client *http.Client, base,
 		Success:    true,
 		ExternalID: firstTweetID(tweetIDs),
 		Message:    "twitter thread published",
-		Metadata:   map[string]any{"tweet_ids": tweetIDs},
+		Metadata:   map[string]any{"tweet_ids": tweetIDs, "account": accountName},
 	}, nil
 }
 
-func (p Publisher) publishSingle(ctx context.Context, client *http.Client, base, token string, payload map[string]any) (publication.Result, error) {
+func (p Publisher) publishSingle(ctx context.Context, client *http.Client, base, token string, payload map[string]any, accountName string) (publication.Result, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return publication.Result{}, err
@@ -139,7 +139,29 @@ func (p Publisher) publishSingle(ctx context.Context, client *http.Client, base,
 		Success:    true,
 		ExternalID: parsed.Data.ID,
 		Message:    "tweet published",
+		Metadata:   map[string]any{"account": accountName},
 	}, nil
+}
+
+func (p Publisher) resolveAccount(name string) (string, config.TwitterAccountConfig, error) {
+	accountName := strings.TrimSpace(name)
+	if accountName == "" {
+		accountName = strings.TrimSpace(p.DefaultAccount)
+	}
+	if accountName == "" {
+		return "", config.TwitterAccountConfig{}, fmt.Errorf("twitter default account not configured")
+	}
+	account, ok := p.Accounts[accountName]
+	if !ok {
+		return "", config.TwitterAccountConfig{}, fmt.Errorf("twitter account not configured: %s", accountName)
+	}
+	if account.BearerTokenEnv == "" {
+		account.BearerTokenEnv = "TWITTER_BEARER_TOKEN"
+	}
+	if account.BaseURL == "" {
+		account.BaseURL = "https://api.twitter.com"
+	}
+	return accountName, account, nil
 }
 
 func firstTweetID(ids []string) string {

@@ -48,7 +48,11 @@ func (h Handler) Handle(ctx context.Context) ([]Item, error) {
 		}
 		targets := make([]string, 0, len(item.Config.PublishTargets))
 		for _, target := range item.Config.PublishTargets {
-			targets = append(targets, string(target))
+			label := string(target.Channel)
+			if target.Account != "" {
+				label += "(" + target.Account + ")"
+			}
+			targets = append(targets, label)
 		}
 		out = append(out, Item{
 			GeneratorID:      item.Config.ID,

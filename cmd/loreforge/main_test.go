@@ -61,7 +61,13 @@ func TestBuildGeneratorRegistryAndPublishers(t *testing.T) {
 		},
 		Channels: config.ChannelsConfig{
 			Filesystem: config.FilesystemChannelConfig{Enabled: true, OutputDir: t.TempDir()},
-			Twitter:    config.TwitterChannelConfig{Enabled: true, DryRun: true},
+			Twitter: config.TwitterChannelConfig{
+				Enabled:        true,
+				DefaultAccount: "base",
+				Accounts: map[string]config.TwitterAccountConfig{
+					"base": {DryRun: true, BearerTokenEnv: "TWITTER_BEARER_TOKEN", BaseURL: "https://api.twitter.com"},
+				},
+			},
 		},
 	}
 	u := universe.Universe{
@@ -147,11 +153,12 @@ func writeCLIConfig(t *testing.T) (string, config.Config) {
 	content := "app:\n  name: loreforge\n  env: dev\n" +
 		"universe:\n  path: " + universePath + "\n" +
 		"scheduler:\n  mode: fixed_interval\n  fixed_interval: 1h\n  seed: 42\n  timezone: UTC\n" +
-		"generation:\n  weights:\n    short_story: 100\n  max_retries: 1\n  recency_window: 5\n" +
+		"generation:\n  max_retries: 1\n  recency_window: 5\n" +
 		"providers:\n  text:\n    driver: mock\n    model: mock-text-v1\n" +
 		"channels:\n  filesystem:\n    enabled: true\n    output_dir: " + outDir + "\n" +
+		"  twitter:\n    enabled: true\n    default_account: base\n    accounts:\n      base:\n        dry_run: true\n        bearer_token_env: TWITTER_BEARER_TOKEN\n        base_url: https://api.twitter.com\n" +
 		"memory:\n  dsn: " + dsn + "\n" +
-		"artists:\n  - id: story-artist\n    profile_id: ash-chorister\n    type: short_story\n    provider:\n      driver: mock\n      model: mock-text-v1\n    publish_targets: [filesystem]\n    scheduler:\n      enabled: true\n      mode: fixed_interval\n      fixed_interval: 1h\n      timezone: UTC\n"
+		"artists:\n  - id: story-artist\n    profile_id: ash-chorister\n    type: short_story\n    provider:\n      driver: mock\n      model: mock-text-v1\n    publish:\n      - channel: filesystem\n    scheduler:\n      enabled: true\n      mode: fixed_interval\n      fixed_interval: 1h\n      timezone: UTC\n"
 	if err := os.WriteFile(cfgPath, []byte(content), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}

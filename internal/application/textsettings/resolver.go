@@ -45,7 +45,6 @@ func (r ResolvedTextSettings) ToConstraints() *episode.TextConstraints {
 		TargetLineCount:    r.TargetLineCount,
 		TargetSceneCount:   r.TargetSceneCount,
 		TemplateStrictness: r.TemplateStrictness,
-		TwitterPublishable: r.TwitterPublishable,
 	}
 }
 
@@ -101,9 +100,6 @@ func applyConfig(dst *ResolvedTextSettings, cfg config.TextFormatConfig) {
 	if strings.TrimSpace(cfg.TemplateStrictness) != "" {
 		dst.TemplateStrictness = cfg.TemplateStrictness
 	}
-	if cfg.TwitterPublishable != nil {
-		dst.TwitterPublishable = *cfg.TwitterPublishable
-	}
 }
 
 func validate(s ResolvedTextSettings) error {
@@ -115,9 +111,6 @@ func validate(s ResolvedTextSettings) error {
 	}
 	if s.TargetParts > 0 && ((s.MinParts > 0 && s.TargetParts < s.MinParts) || (s.MaxParts > 0 && s.TargetParts > s.MaxParts)) {
 		return fmt.Errorf("target_parts outside allowed range")
-	}
-	if s.TwitterPublishable && s.MaxCharsPerPart <= 0 {
-		return fmt.Errorf("twitter_publishable requires max_chars_per_part")
 	}
 	switch s.Type {
 	case episode.OutputTypeTweetShort:

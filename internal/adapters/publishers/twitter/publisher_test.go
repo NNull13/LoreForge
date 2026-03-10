@@ -8,15 +8,22 @@ import (
 	"strings"
 	"testing"
 
+	"loreforge/internal/config"
 	"loreforge/internal/domain/publication"
 )
 
 func TestPublishDryRunThreadReturnsTweetIDs(t *testing.T) {
 	t.Parallel()
 
-	publisher := Publisher{DryRun: true}
+	publisher := Publisher{
+		DefaultAccount: "base",
+		Accounts: map[string]config.TwitterAccountConfig{
+			"base": {DryRun: true},
+		},
+	}
 	result, err := publisher.Publish(context.Background(), publication.Item{
 		EpisodeID:  "ep-1",
+		Target:     publication.Target{Channel: publication.ChannelTwitter},
 		OutputType: "tweet_thread",
 		Parts:      []string{"one", "two", "three"},
 	})
@@ -35,8 +42,13 @@ func TestPublishDryRunThreadReturnsTweetIDs(t *testing.T) {
 func TestPublishRequiresTokenWhenLive(t *testing.T) {
 	t.Parallel()
 
-	publisher := Publisher{DryRun: false}
-	if _, err := publisher.Publish(context.Background(), publication.Item{EpisodeID: "ep-1", Content: "hello"}); err == nil {
+	publisher := Publisher{
+		DefaultAccount: "base",
+		Accounts: map[string]config.TwitterAccountConfig{
+			"base": {DryRun: false, BearerTokenEnv: "TWITTER_BEARER_TOKEN"},
+		},
+	}
+	if _, err := publisher.Publish(context.Background(), publication.Item{EpisodeID: "ep-1", Target: publication.Target{Channel: publication.ChannelTwitter}, Content: "hello"}); err == nil {
 		t.Fatal("expected missing token error")
 	}
 }
@@ -64,14 +76,19 @@ func TestPublishSingleAndThread(t *testing.T) {
 	})}
 
 	t.Setenv("TWITTER_BEARER_TOKEN", "secret")
+	t.Setenv("ARTIST_A_TWITTER_BEARER_TOKEN", "artist-secret")
 	publisher := Publisher{
-		DryRun:  false,
-		BaseURL: "https://twitter.test",
-		Client:  client,
+		DefaultAccount: "base",
+		Accounts: map[string]config.TwitterAccountConfig{
+			"base":     {DryRun: false, BaseURL: "https://twitter.test", BearerTokenEnv: "TWITTER_BEARER_TOKEN"},
+			"artist_a": {DryRun: false, BaseURL: "https://twitter.test", BearerTokenEnv: "ARTIST_A_TWITTER_BEARER_TOKEN"},
+		},
+		Client: client,
 	}
 
 	result, err := publisher.Publish(context.Background(), publication.Item{
 		EpisodeID:  "ep-2",
+		Target:     publication.Target{Channel: publication.ChannelTwitter},
 		OutputType: "tweet_short",
 		Content:    strings.Repeat("A", 400),
 	})
@@ -84,6 +101,7 @@ func TestPublishSingleAndThread(t *testing.T) {
 
 	threadResult, err := publisher.Publish(context.Background(), publication.Item{
 		EpisodeID:  "ep-3",
+		Target:     publication.Target{Channel: publication.ChannelTwitter, Account: "artist_a"},
 		OutputType: "tweet_thread",
 		Parts:      []string{"one", "two"},
 	})
@@ -95,6 +113,9 @@ func TestPublishSingleAndThread(t *testing.T) {
 	}
 	if requests[2].Reply["in_reply_to_tweet_id"] != "tweet-id" {
 		t.Fatalf("expected reply chain in thread payload: %#v", requests[2])
+	}
+	if threadResult.Metadata["account"] != "artist_a" {
+		t.Fatalf("expected custom account metadata, got %#v", threadResult.Metadata)
 	}
 }
 

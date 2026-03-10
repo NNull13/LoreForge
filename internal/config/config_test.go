@@ -100,7 +100,7 @@ func TestValidateRejectsInvalidArtistIdentifiers(t *testing.T) {
 	}
 }
 
-func TestValidateGeneratesLegacyArtists(t *testing.T) {
+func TestValidateRequiresExplicitArtists(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
@@ -111,9 +111,6 @@ func TestValidateGeneratesLegacyArtists(t *testing.T) {
 			FixedInterval: "1h",
 			Seed:          11,
 			Timezone:      "UTC",
-		},
-		Generation: GenerationConfig{
-			EnabledAgents: []string{"short_story", "image"},
 		},
 		Providers: ProvidersConfig{
 			Text:  ProviderDriver{Driver: "mock", Model: "mock-text-v1"},
@@ -127,17 +124,8 @@ func TestValidateGeneratesLegacyArtists(t *testing.T) {
 		t.Fatalf("mkdir universe: %v", err)
 	}
 
-	if err := cfg.Validate(root); err != nil {
-		t.Fatalf("Validate returned error: %v", err)
-	}
-	if len(cfg.Artists) != 2 {
-		t.Fatalf("artist count = %d, want 2", len(cfg.Artists))
-	}
-	if cfg.Artists[0].ID != "image-artist" || cfg.Artists[1].ID != "short_story-artist" {
-		t.Fatalf("unexpected generated artists: %#v", cfg.Artists)
-	}
-	if cfg.Artists[0].ProfileID != cfg.Artists[0].ID || cfg.Artists[1].ProfileID != cfg.Artists[1].ID {
-		t.Fatal("expected generated profile IDs to match artist IDs")
+	if err := cfg.Validate(root); err == nil || !strings.Contains(err.Error(), "at least one artist is required") {
+		t.Fatalf("expected explicit artist validation error, got %v", err)
 	}
 }
 
@@ -173,7 +161,7 @@ func TestValidateProviderDriverAndHelpers(t *testing.T) {
 		}
 	}
 
-	if err := validateArtistOptions(ArtistConfig{ID: "bad", Options: map[string]any{"reference_mode": "bad", "continuity_scope": "same_artist", "max_continuity_items": 1, "max_asset_references": 1}}); err == nil {
+	if err := validateArtistOptions(ArtistConfig{ID: "bad", Options: map[string]any{"reference_mode": "bad", "max_continuity_items": 1, "max_asset_references": 1}}); err == nil {
 		t.Fatal("expected invalid reference mode error")
 	}
 	if err := validateArtistOverrides(ArtistConfig{ID: "bad", Presentation: ArtistPresentationOverrideConfig{SignatureMode: "bad"}}); err == nil {
@@ -293,19 +281,17 @@ func TestValidateArtistOptionAndHelperErrors(t *testing.T) {
 		ID: "bad",
 		Options: map[string]any{
 			"reference_mode":       "creative",
-			"continuity_scope":     "all_artists",
 			"max_continuity_items": 1,
 			"max_asset_references": 1,
 		},
-	}); err == nil || !strings.Contains(err.Error(), "continuity_scope invalid") {
-		t.Fatalf("expected continuity scope validation error, got %v", err)
+	}); err != nil {
+		t.Fatalf("unexpected validation error, got %v", err)
 	}
 
 	if err := validateArtistOptions(ArtistConfig{
 		ID: "bad",
 		Options: map[string]any{
 			"reference_mode":       "creative",
-			"continuity_scope":     "same_artist",
 			"max_continuity_items": -1,
 			"max_asset_references": 1,
 		},
@@ -317,7 +303,6 @@ func TestValidateArtistOptionAndHelperErrors(t *testing.T) {
 		ID: "bad",
 		Options: map[string]any{
 			"reference_mode":       "assets_only",
-			"continuity_scope":     "same_artist",
 			"max_continuity_items": 1,
 			"max_asset_references": -1,
 		},
@@ -329,7 +314,6 @@ func TestValidateArtistOptionAndHelperErrors(t *testing.T) {
 		ID: "bad",
 		Options: map[string]any{
 			"reference_mode":        "continuity_plus_assets",
-			"continuity_scope":      "same_artist",
 			"max_continuity_items":  1,
 			"max_asset_references":  1,
 			"asset_usage_allowlist": []any{"invalid_usage"},
@@ -441,14 +425,124 @@ func TestApplyArtistDefaultsSetsProviderAndOptions(t *testing.T) {
 	if artist.Enabled == nil || !*artist.Enabled {
 		t.Fatalf("expected artist enabled by default, got %#v", artist.Enabled)
 	}
-	if artist.Options["reference_mode"] != "continuity_only" || artist.Options["continuity_scope"] != "same_artist" {
+	if artist.Options["reference_mode"] != "continuity_only" {
 		t.Fatalf("unexpected options defaults: %#v", artist.Options)
 	}
-	if got := artist.PublishTargets; len(got) != 1 || got[0] != "filesystem" {
+	if got := artist.Publish; len(got) != 1 || got[0].Channel != "filesystem" {
 		t.Fatalf("unexpected publish targets: %#v", got)
 	}
 	if artist.Scheduler.Enabled == nil || !*artist.Scheduler.Enabled || artist.Scheduler.Seed != 99 {
 		t.Fatalf("unexpected scheduler defaults: %#v", artist.Scheduler)
+	}
+}
+
+func TestValidatePublishTargetsAndTwitterAccounts(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	cfg := validConfig(root)
+	cfg.Channels.Twitter = TwitterChannelConfig{
+		Enabled:        true,
+		DefaultAccount: "base",
+		Accounts: map[string]TwitterAccountConfig{
+			"base": {DryRun: true},
+		},
+	}
+	cfg.Artists[0].Publish = []ArtistPublishTargetConfig{
+		{Channel: "filesystem"},
+		{Channel: "twitter", Account: "base"},
+	}
+
+	if err := cfg.Validate(root); err != nil {
+		t.Fatalf("Validate returned error: %v", err)
+	}
+	if got := cfg.Artists[0].Publish; len(got) != 2 || got[1].Account != "base" {
+		t.Fatalf("unexpected publish config: %#v", got)
+	}
+	if cfg.Channels.Twitter.Accounts["base"].BaseURL != "https://api.twitter.com" {
+		t.Fatalf("expected twitter account defaults, got %#v", cfg.Channels.Twitter.Accounts["base"])
+	}
+}
+
+func TestValidateSupportsLegacyPublishTargetsAndTwitterConfig(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	cfg := validConfig(root)
+	cfg.Channels.Twitter = TwitterChannelConfig{
+		Enabled:        true,
+		DryRun:         true,
+		BearerTokenEnv: "TWITTER_BEARER_TOKEN",
+		BaseURL:        "https://api.twitter.test",
+	}
+	cfg.Artists[0].Publish = nil
+	cfg.Artists[0].PublishTargets = []string{"twitter"}
+
+	if err := cfg.Validate(root); err != nil {
+		t.Fatalf("Validate returned error: %v", err)
+	}
+	if cfg.Channels.Twitter.DefaultAccount != "base" {
+		t.Fatalf("expected legacy twitter config to synthesize base account, got %#v", cfg.Channels.Twitter)
+	}
+	if got := cfg.Artists[0].Publish; len(got) != 1 || got[0].Channel != "twitter" || got[0].Account != "base" {
+		t.Fatalf("expected legacy publish targets to normalize, got %#v", got)
+	}
+	if cfg.Channels.Twitter.Accounts["base"].BaseURL != "https://api.twitter.test" {
+		t.Fatalf("expected synthesized base account, got %#v", cfg.Channels.Twitter.Accounts["base"])
+	}
+}
+
+func TestValidateRejectsInvalidPublishAccountConfig(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	base := validConfig(root)
+	base.Channels.Twitter = TwitterChannelConfig{
+		Enabled:        true,
+		DefaultAccount: "base",
+		Accounts: map[string]TwitterAccountConfig{
+			"base": {DryRun: true},
+		},
+	}
+
+	cases := []struct {
+		name   string
+		mutate func(*Config)
+		want   string
+	}{
+		{
+			name: "unknown twitter account",
+			mutate: func(cfg *Config) {
+				cfg.Artists[0].Publish = []ArtistPublishTargetConfig{{Channel: "twitter", Account: "missing"}}
+			},
+			want: "unknown twitter account",
+		},
+		{
+			name: "account on filesystem",
+			mutate: func(cfg *Config) {
+				cfg.Artists[0].Publish = []ArtistPublishTargetConfig{{Channel: "filesystem", Account: "base"}}
+			},
+			want: "not supported for channel filesystem",
+		},
+		{
+			name: "duplicate publish channel",
+			mutate: func(cfg *Config) {
+				cfg.Artists[0].Publish = []ArtistPublishTargetConfig{{Channel: "twitter"}, {Channel: "twitter", Account: "base"}}
+			},
+			want: "duplicate publish channel",
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := base
+			cfg.Artists = append([]ArtistConfig(nil), base.Artists...)
+			cfg.Artists[0] = base.Artists[0]
+			tt.mutate(&cfg)
+			if err := cfg.Validate(root); err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("Validate err = %v, want substring %q", err, tt.want)
+			}
+		})
 	}
 }
 

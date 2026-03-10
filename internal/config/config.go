@@ -46,10 +46,8 @@ type SchedulerConfig struct {
 }
 
 type GenerationConfig struct {
-	EnabledAgents []string       `yaml:"enabled_agents"`
-	Weights       map[string]int `yaml:"weights"`
-	MaxRetries    int            `yaml:"max_retries"`
-	RecencyWindow int            `yaml:"recency_window"`
+	MaxRetries    int `yaml:"max_retries"`
+	RecencyWindow int `yaml:"recency_window"`
 }
 
 type TextFormatConfig struct {
@@ -66,7 +64,6 @@ type TextFormatConfig struct {
 	TargetLineCount    int      `yaml:"target_line_count" json:"target_line_count"`
 	TargetSceneCount   int      `yaml:"target_scene_count" json:"target_scene_count"`
 	TemplateStrictness string   `yaml:"template_strictness" json:"template_strictness"`
-	TwitterPublishable *bool    `yaml:"twitter_publishable" json:"twitter_publishable"`
 }
 
 type TextGenerationConfig struct {
@@ -103,8 +100,14 @@ type ArtistConfig struct {
 	Options         map[string]any                   `yaml:"options"`
 	PromptOverrides ArtistPromptOverrideConfig       `yaml:"prompt_overrides"`
 	Presentation    ArtistPresentationOverrideConfig `yaml:"presentation"`
+	Publish         []ArtistPublishTargetConfig      `yaml:"publish"`
 	PublishTargets  []string                         `yaml:"publish_targets"`
 	Scheduler       SchedulerConfig                  `yaml:"scheduler"`
+}
+
+type ArtistPublishTargetConfig struct {
+	Channel string `yaml:"channel"`
+	Account string `yaml:"account"`
 }
 
 type ArtistPromptOverrideConfig struct {
@@ -130,7 +133,15 @@ type FilesystemChannelConfig struct {
 }
 
 type TwitterChannelConfig struct {
-	Enabled        bool   `yaml:"enabled"`
+	Enabled        bool                            `yaml:"enabled"`
+	DefaultAccount string                          `yaml:"default_account"`
+	Accounts       map[string]TwitterAccountConfig `yaml:"accounts"`
+	DryRun         bool                            `yaml:"dry_run"`
+	BearerTokenEnv string                          `yaml:"bearer_token_env"`
+	BaseURL        string                          `yaml:"base_url"`
+}
+
+type TwitterAccountConfig struct {
 	DryRun         bool   `yaml:"dry_run"`
 	BearerTokenEnv string `yaml:"bearer_token_env"`
 	BaseURL        string `yaml:"base_url"`
@@ -154,7 +165,7 @@ func Load(path string) (Config, error) {
 	cfg := Config{
 		Channels: ChannelsConfig{
 			Filesystem: FilesystemChannelConfig{Enabled: true},
-			Twitter:    TwitterChannelConfig{DryRun: true},
+			Twitter:    TwitterChannelConfig{Accounts: map[string]TwitterAccountConfig{}},
 		},
 	}
 	b, err := os.ReadFile(path)
@@ -200,22 +211,6 @@ func (c *Config) Validate(configDir string) error {
 		c.Generation.RecencyWindow = 20
 	}
 	c.applyProviderDefaults()
-	if len(c.Generation.EnabledAgents) == 0 {
-		c.Generation.EnabledAgents = []string{"short_story", "video", "image"}
-	}
-	if len(c.Generation.Weights) == 0 {
-		c.Generation.Weights = map[string]int{"short_story": 60, "video": 25, "image": 15}
-	} else {
-		if c.Generation.Weights["short_story"] == 0 {
-			c.Generation.Weights["short_story"] = 60
-		}
-		if c.Generation.Weights["video"] == 0 {
-			c.Generation.Weights["video"] = 25
-		}
-		if c.Generation.Weights["image"] == 0 {
-			c.Generation.Weights["image"] = 15
-		}
-	}
 
 	if c.Memory.DSN == "" {
 		c.Memory.DSN = "./data/universe.db"
@@ -232,14 +227,14 @@ func (c *Config) Validate(configDir string) error {
 		return errors.New("channels.filesystem.output_dir is required when enabled")
 	}
 	c.Channels.Filesystem.OutputDir = resolveConfigPath(configDir, c.Channels.Filesystem.OutputDir)
-	if c.Channels.Twitter.BaseURL == "" {
-		c.Channels.Twitter.BaseURL = "https://api.twitter.com"
-	}
-	if c.Channels.Twitter.BearerTokenEnv == "" {
-		c.Channels.Twitter.BearerTokenEnv = "TWITTER_BEARER_TOKEN"
-	}
+	c.normalizeTwitterAccounts()
 
-	c.normalizeArtistsFromLegacy()
+	if len(c.Artists) == 0 {
+		return errors.New("at least one artist is required")
+	}
+	for i := range c.Artists {
+		c.applyArtistDefaults(&c.Artists[i])
+	}
 	if err := c.validateArtists(); err != nil {
 		return err
 	}
@@ -274,40 +269,6 @@ func validateScheduler(s SchedulerConfig, enabled bool) error {
 	return nil
 }
 
-func (c *Config) normalizeArtistsFromLegacy() {
-	if len(c.Artists) > 0 {
-		for i := range c.Artists {
-			c.applyArtistDefaults(&c.Artists[i])
-		}
-		return
-	}
-
-	targets := []string{}
-	if c.Channels.Filesystem.Enabled {
-		targets = append(targets, "filesystem")
-	}
-	for _, typ := range c.Generation.EnabledAgents {
-		id := typ + "-artist"
-		artist := ArtistConfig{
-			ID:             id,
-			Type:           typ,
-			Enabled:        boolPtr(true),
-			Style:          "default",
-			PublishTargets: append([]string(nil), targets...),
-			Scheduler:      c.Scheduler,
-		}
-		switch {
-		case isTextArtistType(typ):
-			artist.Provider = c.Providers.Text
-		case typ == "video":
-			artist.Provider = c.Providers.Video
-		case typ == "image":
-			artist.Provider = c.Providers.Image
-		}
-		c.Artists = append(c.Artists, artist)
-	}
-}
-
 func (c *Config) applyArtistDefaults(a *ArtistConfig) {
 	if a.ID == "" {
 		a.ID = a.Type + "-artist"
@@ -322,9 +283,15 @@ func (c *Config) applyArtistDefaults(a *ArtistConfig) {
 		a.Enabled = boolPtr(true)
 	}
 	a.Scheduler = mergeSchedulerConfig(c.Scheduler, a.Scheduler)
-	if len(a.PublishTargets) == 0 {
+	a.normalizePublishTargets()
+	for i := range a.Publish {
+		if a.Publish[i].Channel == "twitter" && strings.TrimSpace(a.Publish[i].Account) == "" {
+			a.Publish[i].Account = c.Channels.Twitter.DefaultAccount
+		}
+	}
+	if len(a.Publish) == 0 {
 		if c.Channels.Filesystem.Enabled {
-			a.PublishTargets = []string{"filesystem"}
+			a.Publish = []ArtistPublishTargetConfig{{Channel: "filesystem"}}
 		}
 	}
 	if a.Provider.Model == "" {
@@ -358,9 +325,6 @@ func (c *Config) applyArtistDefaults(a *ArtistConfig) {
 			a.Options["reference_mode"] = "continuity_plus_assets"
 		}
 	}
-	if _, ok := a.Options["continuity_scope"]; !ok {
-		a.Options["continuity_scope"] = "same_artist"
-	}
 	if _, ok := a.Options["max_continuity_items"]; !ok {
 		a.Options["max_continuity_items"] = 3
 	}
@@ -379,13 +343,9 @@ func schedulerEnabled(enabled *bool) bool {
 }
 
 func (c *Config) validateArtists() error {
-	if len(c.Artists) == 0 {
-		return errors.New("at least one artist is required")
-	}
 	seen := map[string]bool{}
 	for i := range c.Artists {
 		a := &c.Artists[i]
-		c.applyArtistDefaults(a)
 		if a.ID == "" {
 			return fmt.Errorf("artists[%d].id is required", i)
 		}
@@ -417,6 +377,9 @@ func (c *Config) validateArtists() error {
 		if err := validateProviderDriver(*a); err != nil {
 			return err
 		}
+		if err := c.validateArtistPublishTargets(*a); err != nil {
+			return err
+		}
 		if err := validateScheduler(a.Scheduler, schedulerEnabled(a.Scheduler.Enabled)); err != nil {
 			return fmt.Errorf("artist %s scheduler invalid: %w", a.ID, err)
 		}
@@ -431,10 +394,6 @@ func validateArtistOptions(a ArtistConfig) error {
 	case "creative", "continuity_only", "continuity_plus_assets", "assets_only":
 	default:
 		return fmt.Errorf("artist %s options.reference_mode invalid: %s", a.ID, mode)
-	}
-	scope, _ := a.Options["continuity_scope"].(string)
-	if scope != "same_artist" {
-		return fmt.Errorf("artist %s options.continuity_scope invalid: %s", a.ID, scope)
 	}
 	if v, ok := intFromAny(a.Options["max_continuity_items"]); !ok || v < 0 {
 		return fmt.Errorf("artist %s options.max_continuity_items must be >= 0", a.ID)
@@ -502,6 +461,89 @@ func stringSliceFromAny(v any) ([]string, bool) {
 	default:
 		return nil, false
 	}
+}
+
+func (a *ArtistConfig) normalizePublishTargets() {
+	if len(a.Publish) > 0 {
+		return
+	}
+	if len(a.PublishTargets) == 0 {
+		return
+	}
+	a.Publish = make([]ArtistPublishTargetConfig, 0, len(a.PublishTargets))
+	for _, target := range a.PublishTargets {
+		target = strings.TrimSpace(target)
+		if target == "" {
+			continue
+		}
+		a.Publish = append(a.Publish, ArtistPublishTargetConfig{Channel: target})
+	}
+}
+
+func (c *Config) normalizeTwitterAccounts() {
+	twitterCfg := &c.Channels.Twitter
+	if twitterCfg.Accounts == nil {
+		twitterCfg.Accounts = map[string]TwitterAccountConfig{}
+	}
+	if len(twitterCfg.Accounts) == 0 && (twitterCfg.Enabled || twitterCfg.DryRun || twitterCfg.BearerTokenEnv != "" || twitterCfg.BaseURL != "") {
+		twitterCfg.Accounts["base"] = TwitterAccountConfig{
+			DryRun:         twitterCfg.DryRun,
+			BearerTokenEnv: twitterCfg.BearerTokenEnv,
+			BaseURL:        twitterCfg.BaseURL,
+		}
+		if twitterCfg.DefaultAccount == "" {
+			twitterCfg.DefaultAccount = "base"
+		}
+	}
+	for name, account := range twitterCfg.Accounts {
+		if account.BaseURL == "" {
+			account.BaseURL = "https://api.twitter.com"
+		}
+		if account.BearerTokenEnv == "" {
+			account.BearerTokenEnv = "TWITTER_BEARER_TOKEN"
+		}
+		twitterCfg.Accounts[name] = account
+	}
+}
+
+func (c Config) validateArtistPublishTargets(a ArtistConfig) error {
+	seen := map[string]bool{}
+	for _, target := range a.Publish {
+		channel := strings.TrimSpace(target.Channel)
+		if channel == "" {
+			return fmt.Errorf("artist %s publish.channel is required", a.ID)
+		}
+		if seen[channel] {
+			return fmt.Errorf("artist %s has duplicate publish channel: %s", a.ID, channel)
+		}
+		seen[channel] = true
+		switch channel {
+		case "filesystem":
+			if target.Account != "" {
+				return fmt.Errorf("artist %s publish.account is not supported for channel %s", a.ID, channel)
+			}
+			if !c.Channels.Filesystem.Enabled {
+				return fmt.Errorf("artist %s references disabled channel: %s", a.ID, channel)
+			}
+		case "twitter":
+			if !c.Channels.Twitter.Enabled {
+				return fmt.Errorf("artist %s references disabled channel: %s", a.ID, channel)
+			}
+			if strings.TrimSpace(c.Channels.Twitter.DefaultAccount) == "" {
+				return fmt.Errorf("artist %s requires channels.twitter.default_account", a.ID)
+			}
+			account := strings.TrimSpace(target.Account)
+			if account == "" {
+				account = c.Channels.Twitter.DefaultAccount
+			}
+			if _, ok := c.Channels.Twitter.Accounts[account]; !ok {
+				return fmt.Errorf("artist %s references unknown twitter account: %s", a.ID, account)
+			}
+		default:
+			return fmt.Errorf("artist %s publish.channel invalid: %s", a.ID, channel)
+		}
+	}
+	return nil
 }
 
 func (c *Config) applyProviderDefaults() {

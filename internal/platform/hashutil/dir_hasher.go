@@ -2,7 +2,7 @@ package hashutil
 
 import (
 	"context"
-	"crypto/sha1"
+	"crypto/sha256"
 	"encoding/hex"
 	"io"
 	"os"
@@ -29,7 +29,7 @@ func (h DirHasher) Hash(_ context.Context) (string, error) {
 		return "", err
 	}
 	sort.Strings(files)
-	sum := sha1.New() // #nosec G401
+	sum := sha256.New()
 	for _, file := range files {
 		if _, err := io.WriteString(sum, file); err != nil {
 			return "", err

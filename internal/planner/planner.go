@@ -51,6 +51,10 @@ func (p *Planner) BuildBrief(u universe.Universe, recent []HistoryCombo) (episod
 
 func (p *Planner) BuildBriefForType(u universe.Universe, outputType string, recent []HistoryCombo) (episode.Brief, error) {
 	worldID := pickKey(p.rng, u.Worlds)
+	if worldID == "" {
+		return episode.Brief{}, errors.New("no worlds available in universe")
+	}
+
 	eventID, err := pickOne(p.rng, compatibleEventIDs(u, worldID))
 	if err != nil {
 		return episode.Brief{}, err
@@ -170,6 +174,9 @@ func comboKey(world string, chars []string, event string) string {
 
 func pickKey[T any](rng *rand.Rand, m map[string]T) string {
 	keys := sortedKeys(m)
+	if len(keys) == 0 {
+		return ""
+	}
 	return keys[rng.Intn(len(keys))]
 }
 
@@ -192,10 +199,14 @@ func sortedKeys[T any](m map[string]T) []string {
 func (p *Planner) collectRules(u universe.Universe, outputType string) []string {
 	rules := make([]string, 0)
 	for _, r := range u.Rules {
-		rules = append(rules, r.Body)
-		if t, ok := r.Data["target"].(string); ok && t == outputType {
+		t, hasTarget := r.Data["target"].(string)
+		if !hasTarget || t == "" {
+			// Global rule: no specific target, always applies
 			rules = append(rules, r.Body)
-		} else if t == "textual" && isTextualOutputType(outputType) {
+			continue
+		}
+		// Targeted rule: include only when the output type matches
+		if t == outputType || (t == "textual" && isTextualOutputType(outputType)) {
 			rules = append(rules, r.Body)
 		}
 	}

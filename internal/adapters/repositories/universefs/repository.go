@@ -34,6 +34,12 @@ type assetMetadata struct {
 	ModelRoles  map[string]string `yaml:"model_roles"`
 }
 
+type entityDirectoryLoad struct {
+	dir          string
+	expectedType string
+	dst          map[string]domainuniverse.Entity
+}
+
 func (r Repository) Load(_ context.Context) (domainuniverse.Universe, error) {
 	u := domainuniverse.Universe{
 		SourcePath: r.Root,
@@ -55,26 +61,23 @@ func (r Repository) Load(_ context.Context) (domainuniverse.Universe, error) {
 	}
 	u.Universe = entity
 
-	if err := loadEntityDirectories(filepath.Join(r.Root, "rules"), "rule", u.Rules); err != nil {
-		return u, err
+	entityLoads := []entityDirectoryLoad{
+		{dir: "rules", expectedType: "rule", dst: u.Rules},
+		{dir: "worlds", expectedType: "world", dst: u.Worlds},
+		{dir: "characters", expectedType: "character", dst: u.Characters},
+		{dir: "events", expectedType: "event", dst: u.Events},
+		{dir: "templates", expectedType: "template", dst: u.Templates},
 	}
-	if err := loadArtistDirectories(filepath.Join(r.Root, "artists"), u.Artists); err != nil {
-		return u, err
+	for _, load := range entityLoads {
+		if err = loadEntityDirectories(filepath.Join(r.Root, load.dir), load.expectedType, load.dst); err != nil {
+			return u, err
+		}
 	}
-	if err := loadEntityDirectories(filepath.Join(r.Root, "worlds"), "world", u.Worlds); err != nil {
-		return u, err
-	}
-	if err := loadEntityDirectories(filepath.Join(r.Root, "characters"), "character", u.Characters); err != nil {
-		return u, err
-	}
-	if err := loadEntityDirectories(filepath.Join(r.Root, "events"), "event", u.Events); err != nil {
-		return u, err
-	}
-	if err := loadEntityDirectories(filepath.Join(r.Root, "templates"), "template", u.Templates); err != nil {
+	if err = loadArtistDirectories(filepath.Join(r.Root, "artists"), u.Artists); err != nil {
 		return u, err
 	}
 
-	if err := domainuniverse.Validate(u); err != nil {
+	if err = domainuniverse.Validate(u); err != nil {
 		return u, err
 	}
 	return u, nil

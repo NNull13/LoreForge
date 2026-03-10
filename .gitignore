@@ -31,4 +31,5 @@ data/
 .claude/
 out/
 .idea/
-
+universes/
+CLAUDE.md

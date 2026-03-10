@@ -36,7 +36,7 @@ func TestHandleGeneratesAndPublishesEpisode(t *testing.T) {
 						Type:             episode.OutputTypeShortStory,
 						Style:            "lyrical-canon",
 						SchedulerEnabled: true,
-						PublishTargets:   []publication.ChannelName{publication.ChannelFilesystem},
+						PublishTargets:   []publication.Target{{Channel: publication.ChannelFilesystem}},
 						Scheduler: scheduling.Config{
 							Mode:          scheduling.ModeFixedInterval,
 							FixedInterval: time.Hour,
@@ -201,7 +201,7 @@ func TestHandleMarksPublishFailedAndPersistsRecord(t *testing.T) {
 						ProfileID:        "ash-chorister",
 						Type:             episode.OutputTypeShortStory,
 						SchedulerEnabled: true,
-						PublishTargets:   []publication.ChannelName{publication.ChannelFilesystem},
+						PublishTargets:   []publication.Target{{Channel: publication.ChannelFilesystem}},
 						Scheduler:        scheduling.Config{Mode: scheduling.ModeFixedInterval, FixedInterval: time.Hour, Timezone: "UTC"},
 					},
 				},
@@ -247,8 +247,11 @@ func TestHandleAcceptsPartialPublishSuccess(t *testing.T) {
 						ProfileID:        "ash-chorister",
 						Type:             episode.OutputTypeShortStory,
 						SchedulerEnabled: true,
-						PublishTargets:   []publication.ChannelName{publication.ChannelFilesystem, publication.ChannelTwitter},
-						Scheduler:        scheduling.Config{Mode: scheduling.ModeFixedInterval, FixedInterval: time.Hour, Timezone: "UTC"},
+						PublishTargets: []publication.Target{
+							{Channel: publication.ChannelFilesystem},
+							{Channel: publication.ChannelTwitter, Account: "base"},
+						},
+						Scheduler: scheduling.Config{Mode: scheduling.ModeFixedInterval, FixedInterval: time.Hour, Timezone: "UTC"},
 					},
 				},
 			},
@@ -284,6 +287,62 @@ func TestHandleAcceptsPartialPublishSuccess(t *testing.T) {
 	}
 	if len(result.Record.Manifest.Channels) != 1 || result.Record.Manifest.Channels[0] != "filesystem" {
 		t.Fatalf("unexpected published channels: %#v", result.Record.Manifest.Channels)
+	}
+}
+
+func TestHandlePersistsResolvedPublishAccountMetadata(t *testing.T) {
+	t.Parallel()
+
+	repo := &fakeEpisodeRepo{}
+	handler := Handler{
+		UniverseRepo:       fakeUniverseRepo{universe: testUniverse()},
+		EpisodeRepo:        repo,
+		SchedulerStateRepo: &fakeSchedulerStateRepo{},
+		GeneratorRegistry: fakeGeneratorRegistry{
+			items: []ports.RegisteredGenerator{
+				{
+					Generator: fakeGenerator{id: "tweet-artist", outputType: episode.OutputTypeShortStory, content: validStory()},
+					Config: ports.GeneratorConfig{
+						ID:               "tweet-artist",
+						ProfileID:        "ash-chorister",
+						Type:             episode.OutputTypeShortStory,
+						SchedulerEnabled: true,
+						PublishTargets:   []publication.Target{{Channel: publication.ChannelTwitter, Account: "artist_a"}},
+						Scheduler:        scheduling.Config{Mode: scheduling.ModeFixedInterval, FixedInterval: time.Hour, Timezone: "UTC"},
+					},
+				},
+			},
+		},
+		PublisherRegistry: fakePublisherRegistry{
+			publisher: fakeStaticPublisher{
+				name: publication.ChannelTwitter,
+				result: publication.Result{
+					Channel:    "twitter",
+					Success:    true,
+					ExternalID: "tweet-123",
+					Metadata:   map[string]any{"account": "artist_a"},
+				},
+			},
+		},
+		Clock:       fakeClock{now: time.Now().UTC()},
+		IDGenerator: fakeIDGen{id: "ep-twitter"},
+		Hasher:      fakeHasher{value: "hash"},
+		Planner:     planner.New(planner.Config{Weights: map[string]int{"short_story": 100}, Seed: 7, RecencyWindow: 5}),
+	}
+
+	result, err := handler.Handle(context.Background(), Request{Generator: "tweet-artist", MaxRetries: 1, RecencyWindow: 5})
+	if err != nil {
+		t.Fatalf("Handle returned error: %v", err)
+	}
+	published, ok := result.Record.Publish["twitter"].(publication.Result)
+	if !ok {
+		t.Fatalf("expected twitter publish result, got %#v", result.Record.Publish["twitter"])
+	}
+	if published.Metadata["account"] != "artist_a" {
+		t.Fatalf("expected account metadata to persist, got %#v", published.Metadata)
+	}
+	if saved, ok := repo.saved.Publish["twitter"].(publication.Result); !ok || saved.Metadata["account"] != "artist_a" {
+		t.Fatalf("expected persisted twitter publish metadata, got %#v", repo.saved.Publish["twitter"])
 	}
 }
 
@@ -405,7 +464,7 @@ func TestResolveGeneratorAcceptsTypeAlias(t *testing.T) {
 			},
 		},
 	}
-	def, err := handler.resolveGenerator("short_story", context.Background())
+	def, err := handler.resolveGenerator(context.Background(), "short_story")
 	if err != nil {
 		t.Fatalf("resolveGenerator returned error: %v", err)
 	}
@@ -459,10 +518,10 @@ func TestPublishFailureErrorAndPublishedChannels(t *testing.T) {
 	if len(channels) != 1 || channels[0] != "filesystem" {
 		t.Fatalf("unexpected published channels: %#v", channels)
 	}
-	if err := publishFailureError(results, []publication.ChannelName{publication.ChannelFilesystem, publication.ChannelTwitter}); err != nil {
+	if err := publishFailureError(results, []publication.Target{{Channel: publication.ChannelFilesystem}, {Channel: publication.ChannelTwitter, Account: "base"}}); err != nil {
 		t.Fatalf("expected partial success to suppress publish failure error: %v", err)
 	}
-	if err := publishFailureError(map[string]any{"twitter": map[string]any{"error": "timeout"}}, []publication.ChannelName{publication.ChannelTwitter}); !errors.Is(err, episode.ErrPublishFailed) {
+	if err := publishFailureError(map[string]any{"twitter": map[string]any{"error": "timeout"}}, []publication.Target{{Channel: publication.ChannelTwitter}}); !errors.Is(err, episode.ErrPublishFailed) {
 		t.Fatalf("unexpected publish failure error: %v", err)
 	}
 }
@@ -580,7 +639,7 @@ func TestNextDueGeneratorAndPublishHelpers(t *testing.T) {
 			CreatedAt:  now,
 		},
 		OutputText: "Aria keeps the old oath alive in the ash city.",
-	}, episode.ArtistLens{}, []publication.ChannelName{publication.ChannelFilesystem})
+	}, episode.ArtistLens{}, []publication.Target{{Channel: publication.ChannelFilesystem}})
 	if results["filesystem"].(map[string]any)["error"] != "channel not configured" {
 		t.Fatalf("unexpected publish result: %#v", results)
 	}

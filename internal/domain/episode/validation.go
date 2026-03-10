@@ -139,12 +139,6 @@ func countNonEmptyLines(content string) int {
 	return count
 }
 
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
 
 func (o Output) OutputParts() []string {
 	if o.Text == nil || len(o.Text.Parts) == 0 {

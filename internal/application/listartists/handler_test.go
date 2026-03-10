@@ -7,6 +7,7 @@ import (
 
 	"loreforge/internal/application/ports"
 	"loreforge/internal/domain/episode"
+	"loreforge/internal/domain/publication"
 	"loreforge/internal/domain/scheduling"
 	domainuniverse "loreforge/internal/domain/universe"
 )
@@ -26,8 +27,11 @@ func TestHandleReturnsArtistProfilesAndNextRun(t *testing.T) {
 						ProviderDriver:   "openai_text",
 						ProviderModel:    "gpt-5-mini",
 						SchedulerEnabled: true,
-						PublishTargets:   nil,
-						Scheduler:        scheduling.Config{Mode: scheduling.ModeFixedInterval, FixedInterval: time.Hour, Timezone: "UTC"},
+						PublishTargets: []publication.Target{
+							{Channel: publication.ChannelFilesystem},
+							{Channel: publication.ChannelTwitter, Account: "base"},
+						},
+						Scheduler: scheduling.Config{Mode: scheduling.ModeFixedInterval, FixedInterval: time.Hour, Timezone: "UTC"},
 					},
 				},
 			},
@@ -55,6 +59,9 @@ func TestHandleReturnsArtistProfilesAndNextRun(t *testing.T) {
 	}
 	if items[0].NextRun == nil || !items[0].NextRun.Equal(now.Add(3*time.Hour)) {
 		t.Fatalf("unexpected next run: %v", items[0].NextRun)
+	}
+	if got := items[0].PublishTargets; len(got) != 2 || got[0] != "filesystem" || got[1] != "twitter(base)" {
+		t.Fatalf("unexpected publish targets: %#v", got)
 	}
 }
 

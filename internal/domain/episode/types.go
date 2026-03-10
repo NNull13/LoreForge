@@ -128,7 +128,6 @@ type TextConstraints struct {
 	TargetLineCount    int        `json:"target_line_count,omitempty"`
 	TargetSceneCount   int        `json:"target_scene_count,omitempty"`
 	TemplateStrictness string     `json:"template_strictness,omitempty"`
-	TwitterPublishable bool       `json:"twitter_publishable,omitempty"`
 }
 
 type Output struct {

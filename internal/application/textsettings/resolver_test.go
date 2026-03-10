@@ -30,10 +30,9 @@ func TestResolveTextSettingsPrecedence(t *testing.T) {
 		},
 		Options: map[string]any{
 			"text": map[string]any{
-				"temperature":         temp,
-				"target_parts":        5,
-				"max_chars_per_part":  280,
-				"twitter_publishable": true,
+				"temperature":        temp,
+				"target_parts":       5,
+				"max_chars_per_part": 280,
 			},
 		},
 	}

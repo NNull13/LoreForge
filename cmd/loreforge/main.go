@@ -277,7 +277,6 @@ func buildApp(cfg config.Config) (app, error) {
 	episodeRepo := episodestore.New(cfg.Memory.DSN)
 	schedulerRepo := schedulerstatefs.Repository{BaseDir: episodestore.BaseDirFromDSN(cfg.Memory.DSN)}
 	plannerSvc := planner.New(planner.Config{
-		Weights:        cfg.Generation.Weights,
 		RecencyWindow:  cfg.Generation.RecencyWindow,
 		Seed:           cfg.Scheduler.Seed,
 		ProductionMode: isProductionEnv(cfg.App.Env),
@@ -333,7 +332,7 @@ func buildGeneratorRegistry(cfg config.Config, u universe.Universe) (ports.Gener
 				Type:                  episode.OutputType(ac.Type),
 				Style:                 ac.Style,
 				SchedulerEnabled:      isSchedulerEnabled(ac.Scheduler),
-				PublishTargets:        toPublishTargets(ac.PublishTargets),
+				PublishTargets:        toPublishTargets(ac.Publish),
 				Scheduler:             schedulerCfg,
 				Seed:                  ac.Scheduler.Seed,
 				ProviderDriver:        ac.Provider.Driver,
@@ -341,7 +340,6 @@ func buildGeneratorRegistry(cfg config.Config, u universe.Universe) (ports.Gener
 				ProviderConfig:        providerConfigMap(ac.Provider),
 				Options:               cloneAnyMap(ac.Options),
 				ReferenceMode:         optionString(ac.Options, "reference_mode", "creative"),
-				ContinuityScope:       optionString(ac.Options, "continuity_scope", "same_artist"),
 				MaxContinuityItems:    optionInt(ac.Options, "max_continuity_items", 3),
 				MaxAssetReferences:    optionInt(ac.Options, "max_asset_references", 4),
 				IncludeTextMemories:   optionBool(ac.Options, "include_text_memories", true),
@@ -392,9 +390,8 @@ func buildPublisherRegistry(cfg config.Config) ports.PublisherRegistry {
 	}
 	if cfg.Channels.Twitter.Enabled {
 		items = append(items, twitter.Publisher{
-			DryRun:         cfg.Channels.Twitter.DryRun,
-			BearerTokenEnv: cfg.Channels.Twitter.BearerTokenEnv,
-			BaseURL:        cfg.Channels.Twitter.BaseURL,
+			DefaultAccount: cfg.Channels.Twitter.DefaultAccount,
+			Accounts:       cfg.Channels.Twitter.Accounts,
 		})
 	}
 	return publishers.New(items)
@@ -427,10 +424,13 @@ func isSchedulerEnabled(cfg config.SchedulerConfig) bool {
 	return cfg.Enabled == nil || *cfg.Enabled
 }
 
-func toPublishTargets(values []string) []publication.ChannelName {
-	out := make([]publication.ChannelName, 0, len(values))
+func toPublishTargets(values []config.ArtistPublishTargetConfig) []publication.Target {
+	out := make([]publication.Target, 0, len(values))
 	for _, value := range values {
-		out = append(out, publication.ChannelName(value))
+		out = append(out, publication.Target{
+			Channel: publication.ChannelName(value.Channel),
+			Account: value.Account,
+		})
 	}
 	return out
 }

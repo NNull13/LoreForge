@@ -45,7 +45,7 @@ func (h Handler) Handle(ctx context.Context, req Request) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("%w: %v", episode.ErrUniverseInvalid, err)
 	}
-	def, err := h.resolveGenerator(req.Generator, ctx)
+	def, err := h.resolveGenerator(ctx, req.Generator)
 	if err != nil {
 		return Result{}, err
 	}
@@ -102,6 +102,7 @@ func (h Handler) Handle(ctx context.Context, req Request) (Result, error) {
 			state.Metadata["prompt_image"] = bootstrapImage.AssetPath
 		}
 	}
+	now := h.Clock.Now()
 	var out episode.Output
 	retries := 0
 	for {
@@ -113,10 +114,20 @@ func (h Handler) Handle(ctx context.Context, req Request) (Result, error) {
 		}
 		retries++
 		if retries > req.MaxRetries {
+			// Advance the scheduler even on failure to prevent tight retry loops
+			if def.Config.SchedulerEnabled {
+				if sched, schedErr := scheduling.NewScheduler(def.Config.Scheduler); schedErr == nil {
+					if nextRun, nextErr := sched.NextRun(now); nextErr == nil {
+						_ = h.SchedulerStateRepo.Save(ctx, def.Config.ID, scheduling.State{
+							LastRunAt: &now,
+							NextRunAt: nextRun,
+						})
+					}
+				}
+			}
 			return Result{}, err
 		}
 	}
-	now := h.Clock.Now()
 	episodeID := h.IDGenerator.NewEpisodeID()
 	record := episode.Record{
 		Manifest: episode.Manifest{
@@ -253,7 +264,7 @@ func (h Handler) bootstrapRunwayImage(ctx context.Context, req Request, brief ep
 	return bootstrap.Generator.Generate(ctx, brief, state)
 }
 
-func (h Handler) resolveGenerator(requested string, ctx context.Context) (ports.RegisteredGenerator, error) {
+func (h Handler) resolveGenerator(ctx context.Context, requested string) (ports.RegisteredGenerator, error) {
 	if requested != "" {
 		if def, ok := h.GeneratorRegistry.GetByID(requested); ok {
 			return def, nil
@@ -350,34 +361,35 @@ func publishedChannels(results map[string]any) []string {
 	return out
 }
 
-func (h Handler) publish(ctx context.Context, record episode.Record, artist episode.ArtistLens, targets []publication.ChannelName) (map[string]any, map[string]any) {
+func (h Handler) publish(ctx context.Context, record episode.Record, artist episode.ArtistLens, targets []publication.Target) (map[string]any, map[string]any) {
 	results := make(map[string]any, len(targets))
 	presentation := make(map[string]any, len(targets))
 	for _, target := range targets {
-		publisher, ok := h.PublisherRegistry.Get(target)
+		publisher, ok := h.PublisherRegistry.Get(target.Channel)
 		if !ok {
-			results[string(target)] = map[string]any{"success": false, "error": "channel not configured"}
-			presentation[string(target)] = artistpresentation.Applied{Channel: string(target)}
+			results[string(target.Channel)] = map[string]any{"success": false, "error": "channel not configured"}
+			presentation[string(target.Channel)] = artistpresentation.Applied{Channel: string(target.Channel)}
 			continue
 		}
 		item, applied := artistpresentation.Compose(publication.Item{
 			EpisodeID:     record.Manifest.EpisodeID,
 			GeneratorID:   record.Manifest.ArtistID,
 			GeneratorType: record.Manifest.ArtistType,
+			Target:        target,
 			OutputType:    record.Manifest.OutputType,
 			Format:        record.Manifest.OutputType,
 			Content:       record.OutputText,
 			Parts:         append([]string(nil), record.OutputParts...),
 			AssetPath:     record.OutputAssetPath,
 			CreatedAt:     record.Manifest.CreatedAt,
-		}, artist, target)
+		}, artist, target.Channel)
 		res, err := publisher.Publish(ctx, item)
-		presentation[string(target)] = applied
+		presentation[string(target.Channel)] = applied
 		if err != nil {
-			results[string(target)] = map[string]any{"success": false, "error": err.Error()}
+			results[string(target.Channel)] = map[string]any{"success": false, "error": err.Error(), "account": target.Account}
 			continue
 		}
-		results[string(target)] = res
+		results[string(target.Channel)] = res
 	}
 	return results, presentation
 }
@@ -612,36 +624,66 @@ func sanitizeNestedSecrets(value any) any {
 
 func secretKey(key string) bool {
 	lower := strings.ToLower(strings.TrimSpace(key))
-	return strings.Contains(lower, "key") ||
-		strings.Contains(lower, "token") ||
-		strings.Contains(lower, "secret") ||
-		strings.Contains(lower, "authorization")
+	exactSecrets := map[string]bool{
+		"authorization": true,
+		"api_key":       true,
+		"api_key_env":   true,
+		"secret":        true,
+		"token":         true,
+		"password":      true,
+		"passwd":        true,
+		"bearer_token":  true,
+		"access_token":  true,
+		"refresh_token": true,
+		"private_key":   true,
+		"client_secret": true,
+		"credential":    true,
+		"credentials":   true,
+	}
+	if exactSecrets[lower] {
+		return true
+	}
+	for _, suffix := range []string{"_key", "_token", "_secret", "_password", "_passwd", "_credential"} {
+		if strings.HasSuffix(lower, suffix) {
+			return true
+		}
+	}
+	for _, prefix := range []string{"api_key", "secret_", "private_"} {
+		if strings.HasPrefix(lower, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
-func publishFailureError(results map[string]any, targets []publication.ChannelName) error {
+func publishFailureError(results map[string]any, targets []publication.Target) error {
 	if len(targets) == 0 || len(publishedChannels(results)) > 0 {
 		return nil
 	}
 	failures := make([]string, 0, len(targets))
 	for _, target := range targets {
-		value, ok := results[string(target)]
+		targetName := string(target.Channel)
+		if target.Account != "" {
+			targetName += "(" + target.Account + ")"
+		}
+		value, ok := results[string(target.Channel)]
 		if !ok {
-			failures = append(failures, string(target)+": publish result missing")
+			failures = append(failures, targetName+": publish result missing")
 			continue
 		}
 		switch typed := value.(type) {
 		case publication.Result:
 			if !typed.Success {
-				failures = append(failures, string(target)+": "+firstNonEmpty(typed.Message, "publish failed"))
+				failures = append(failures, targetName+": "+firstNonEmpty(typed.Message, "publish failed"))
 			}
 		case map[string]any:
 			errMsg, _ := typed["error"].(string)
 			if strings.TrimSpace(errMsg) == "" {
 				errMsg = "publish failed"
 			}
-			failures = append(failures, string(target)+": "+errMsg)
+			failures = append(failures, targetName+": "+errMsg)
 		default:
-			failures = append(failures, string(target)+": publish failed")
+			failures = append(failures, targetName+": publish failed")
 		}
 	}
 	if len(failures) == 0 {

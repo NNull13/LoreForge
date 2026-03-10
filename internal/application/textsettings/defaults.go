@@ -17,7 +17,6 @@ type ResolvedTextSettings struct {
 	TargetLineCount    int
 	TargetSceneCount   int
 	TemplateStrictness string
-	TwitterPublishable bool
 }
 
 var SystemTextDefaults = map[episode.OutputType]ResolvedTextSettings{
@@ -32,7 +31,6 @@ var SystemTextDefaults = map[episode.OutputType]ResolvedTextSettings{
 		MaxOutputTokens:    250,
 		TargetParts:        1,
 		TemplateStrictness: "strict",
-		TwitterPublishable: true,
 	},
 	episode.OutputTypeTweetThread: {
 		Type:               episode.OutputTypeTweetThread,
@@ -45,7 +43,6 @@ var SystemTextDefaults = map[episode.OutputType]ResolvedTextSettings{
 		MaxOutputTokens:    900,
 		TargetParts:        3,
 		TemplateStrictness: "strict",
-		TwitterPublishable: true,
 	},
 	episode.OutputTypeShortStory: {
 		Type:               episode.OutputTypeShortStory,

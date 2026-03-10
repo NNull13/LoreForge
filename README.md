@@ -207,8 +207,26 @@ artists:
     provider:
       driver: mock
       model: mock-text-v1
-    publish_targets: [filesystem]
+    publish:
+      - channel: filesystem
+
+channels:
+  filesystem:
+    enabled: true
+    output_dir: ./out
+  twitter:
+    enabled: true
+    default_account: base
+    accounts:
+      base:
+        dry_run: true
+        bearer_token_env: TWITTER_BEARER_TOKEN
+      brand_voice:
+        dry_run: true
+        bearer_token_env: BRAND_VOICE_TWITTER_BEARER_TOKEN
 ```
+
+Artists can publish to the same channel using different accounts by setting `publish[].account`, for example `channel: twitter` with `account: brand_voice`.
 
 The full working example lives at `universes/config.yaml`.
 

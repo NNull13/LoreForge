@@ -22,7 +22,7 @@ type GeneratorConfig struct {
 	Type                  episode.OutputType
 	Style                 string
 	SchedulerEnabled      bool
-	PublishTargets        []publication.ChannelName
+	PublishTargets        []publication.Target
 	Scheduler             scheduling.Config
 	Seed                  int64
 	ProviderDriver        string
@@ -30,7 +30,6 @@ type GeneratorConfig struct {
 	ProviderConfig        map[string]any
 	Options               map[string]any
 	ReferenceMode         string
-	ContinuityScope       string
 	MaxContinuityItems    int
 	MaxAssetReferences    int
 	IncludeTextMemories   bool

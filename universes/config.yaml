@@ -14,17 +14,6 @@ scheduler:
   timezone: America/Chicago
 
 generation:
-  enabled_agents: [short_story, video, image]
-  weights:
-    short_story: 25
-    tweet_short: 10
-    tweet_thread: 10
-    long_story: 15
-    poem: 10
-    song_lyrics: 10
-    screenplay_series: 10
-    video: 25
-    image: 5
   max_retries: 2
   recency_window: 20
 
@@ -37,7 +26,6 @@ text:
       require_entity_match: true
       temperature: 0.6
       max_output_tokens: 250
-      twitter_publishable: true
     tweet_thread:
       min_parts: 2
       max_parts: 5
@@ -46,7 +34,6 @@ text:
       require_structured: true
       temperature: 0.6
       max_output_tokens: 900
-      twitter_publishable: true
     short_story:
       min_words: 400
       max_words: 1200
@@ -100,7 +87,10 @@ artists:
     provider:
       driver: mock
       model: mock-text-v1
-    publish_targets: [filesystem, twitter]
+    publish:
+      - channel: filesystem
+      - channel: twitter
+        account: base
     scheduler:
       enabled: true
       mode: random_window
@@ -116,7 +106,10 @@ artists:
     provider:
       driver: mock
       model: mock-text-v1
-    publish_targets: [filesystem, twitter]
+    publish:
+      - channel: filesystem
+      - channel: twitter
+        account: brand_voice
     scheduler:
       enabled: true
       mode: fixed_interval
@@ -131,7 +124,8 @@ artists:
     provider:
       driver: mock
       model: mock-text-v1
-    publish_targets: [filesystem]
+    publish:
+      - channel: filesystem
     scheduler:
       enabled: true
       mode: random_window
@@ -147,7 +141,8 @@ artists:
     provider:
       driver: mock
       model: mock-text-v1
-    publish_targets: [filesystem]
+    publish:
+      - channel: filesystem
     scheduler:
       enabled: true
       mode: fixed_interval
@@ -162,7 +157,8 @@ artists:
     provider:
       driver: mock
       model: mock-text-v1
-    publish_targets: [filesystem]
+    publish:
+      - channel: filesystem
     scheduler:
       enabled: true
       mode: random_window
@@ -178,7 +174,8 @@ artists:
     provider:
       driver: mock
       model: mock-text-v1
-    publish_targets: [filesystem]
+    publish:
+      - channel: filesystem
     scheduler:
       enabled: true
       mode: fixed_interval
@@ -193,7 +190,8 @@ artists:
     provider:
       driver: mock
       model: mock-text-v1
-    publish_targets: [filesystem]
+    publish:
+      - channel: filesystem
     scheduler:
       enabled: true
       mode: fixed_interval
@@ -208,7 +206,8 @@ artists:
     provider:
       driver: mock
       model: mock-video-v1
-    publish_targets: [filesystem]
+    publish:
+      - channel: filesystem
     scheduler:
       enabled: true
       mode: fixed_interval
@@ -223,7 +222,8 @@ artists:
     provider:
       driver: mock
       model: mock-image-v1
-    publish_targets: [filesystem]
+    publish:
+      - channel: filesystem
     scheduler:
       enabled: true
       mode: random_window
@@ -238,9 +238,16 @@ channels:
     output_dir: ./out
   twitter:
     enabled: false
-    dry_run: true
-    bearer_token_env: TWITTER_BEARER_TOKEN
-    base_url: https://api.twitter.com
+    default_account: base
+    accounts:
+      base:
+        dry_run: true
+        bearer_token_env: TWITTER_BEARER_TOKEN
+        base_url: https://api.twitter.com
+      brand_voice:
+        dry_run: true
+        bearer_token_env: BRAND_VOICE_TWITTER_BEARER_TOKEN
+        base_url: https://api.twitter.com
 
 memory:
   driver: sqlite
